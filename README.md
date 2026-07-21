@@ -175,4 +175,4 @@
 
 MIT License. See [LICENSE](./LICENSE).
 
-© 2026 嘉文钱
+© 2026 xiaobo
