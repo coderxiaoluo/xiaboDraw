@@ -758,7 +758,11 @@ async function analyzeImageWithGemini(settings, imagePart, prompt) {
           }
         ]
       }
-    ]
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json"
+    }
   });
 
   return extractTextFromGemini(response);
@@ -769,6 +773,7 @@ async function analyzeImageWithOpenAICompatible(settings, imagePart, prompt) {
     baseUrl: settings.promptBaseUrl,
     apiKey: settings.promptApiKey,
     model: settings.promptModel || OPENAI_DEFAULT_PROMPT_MODEL,
+    temperature: 0.2,
     messages: [
       {
         role: "user",
@@ -1094,13 +1099,14 @@ function buildAnalyzePrompt(payload) {
   return [
     "角色设定：你是一位资深视觉导演与图像逆向分析师，擅长将视觉图像拆解为稳定、可编辑、可重组的结构化提示词数据。",
     "核心任务：分析上传图片，提取其核心视觉变量，输出结构化 JSON。目标不是写华丽文案，而是输出稳定、明确、可用于后续程序组装提示词的数据。",
-    "总原则：优先还原原图的主体、风格、镜头语言、光线结构、材质质感、构图逻辑和空间关系；尽量填写具体、可观察、可复用的信息，不要写空泛评价。",
-    "禁止事项：禁止使用 Beautiful、High quality、Amazing、Stunning、Gorgeous 等空洞形容词；禁止编造品牌、商标、人物真实身份或受版权保护角色名，不确定时使用通用描述。",
-    "分析时必须覆盖四个维度：1. Camera & Lens；2. Lighting Setup；3. Material & Texture；4. Compositional Logic。",
+    "总原则：优先还原原图的主体、风格、镜头语言、光线结构、材质质感、构图逻辑和空间关系；只填写从图中可观察或有高把握推断的信息，不要写空泛评价。",
+    "禁止事项：禁止使用 Beautiful、High quality、Amazing、Stunning、Gorgeous 等空洞形容词；禁止编造品牌、商标、人物真实身份或受版权保护角色名，不确定时使用通用描述；禁止用通用套话填满字段。",
+    "置信度规则：主体、风格、光线方向/软硬、构图、环境、材质外观以图像观察为准；焦距、光圈、具体焦段若无法从图中高把握推断，必须返回空字符串，不要默认填写 50mm、f/1.8 等常见值。",
+    "分析时尽量覆盖四个维度（有证据才写）：1. Camera & Lens；2. Lighting Setup；3. Material & Texture；4. Compositional Logic。",
     "输出必须是严格合法 JSON，不要 Markdown，不要解释，不要额外前后缀。",
     "structuredPrompt.enFull 是英文完整版提示词主稿，必须按固定顺序输出八个段落，并且每个段落之间只用英文分号 ; 分隔。",
     "structuredPrompt.enFull 的固定顺序和标签必须是：Subject: ...; Style: ...; Lighting: ...; Camera: ...; Environment: ...; Material: ...; Composition: ...; Rendering: ...",
-    "structuredPrompt.enFull 必须是纯英文，不能混入中文；每个段落必须写具体内容，不要只写标签。",
+    "structuredPrompt.enFull 必须是纯英文，不能混入中文；每个段落必须写具体内容，不要只写标签；某一段若确实无法观察，可写简短可见事实，但仍需保留该标签段落。",
     "analysis 是结构化辅助数据，drafts 是附带草稿。",
     "字段要求：",
     "1. title：12 字以内概括主题。",
@@ -1110,22 +1116,22 @@ function buildAnalyzePrompt(payload) {
     "5. analysis.style.medium：媒介，例如摄影、插画、3D、胶片摄影。",
     "6. analysis.style.genre：风格类型，例如电影感人像、时尚大片、电商产品图。",
     "7. analysis.style.mood：整体情绪或氛围。",
-    "8. analysis.style.referenceLook：风格参照或设备观感，例如哈苏质感、电影机观感。",
-    "9. analysis.camera：拆成 focalLength、aperture、angle、shotType、depthOfField。",
-    "10. analysis.lighting：拆成 direction、quality、effect、timeOfDay。",
+    "8. analysis.style.referenceLook：风格参照或设备观感；仅在有明显依据时填写，否则留空。",
+    "9. analysis.camera：拆成 focalLength、aperture、angle、shotType、depthOfField；无法高把握推断的项留空。",
+    "10. analysis.lighting：拆成 direction、quality、effect、timeOfDay；仅写可见光效。",
     "11. analysis.material：拆成 surface、microDetail、opticalProperties 数组。",
     "12. analysis.composition：拆成 layout、subjectPlacement、foreground、background、leadingLines、symmetry。",
     "13. analysis.environment：拆成 sceneType、backgroundMaterial、spatialRelation。",
-    "14. analysis.rendering：拆成 priorityTerms、deviceLook、colorGrade。",
+    "14. analysis.rendering：拆成 priorityTerms、deviceLook、colorGrade；只写图中可见的渲染/成片特征，不要堆砌 Extreme fidelity 等空词。",
     "15. structuredPrompt.zhFull 必须是 structuredPrompt.enFull 的纯中文语义对应版本，也按同样顺序和分号结构输出：主体：...；风格：...；光线：...；镜头：...；环境：...；材质：...；构图：...；渲染：...",
     "16. structuredPrompt.enShort 必须基于 structuredPrompt.enFull 精简，保留主体、风格、光线、镜头、关键材质和构图。",
     "17. structuredPrompt.zhShort 必须基于 structuredPrompt.zhFull 精简，保留主体、风格、光线、镜头、关键材质和构图。",
-    "18. keywords：提供 6 到 12 个中文短词。",
+    "18. keywords：提供 6 到 12 个中文短词，必须来自图中可见信息。",
     "19. drafts 可复制 structuredPrompt 对应字段。",
-    "20. 如果字段缺失，返回空字符串或空数组，不要编造无法观察的细节。",
-    "21. 输出前先内部自检：根据 structuredPrompt.enFull 重新生成图片时，是否足以还原原图 90% 的视觉变量；如果不能，请补足缺失段落。",
+    "20. 如果字段缺失，返回空字符串或空数组，不要编造无法观察的细节，也不要用模板默认值补齐。",
+    "21. 输出前先内部自检：structuredPrompt.enFull 是否足以支撑还原原图的关键可见变量；缺失的可见信息请补足，但不要用猜测参数凑完整度。",
     'JSON 格式：{"title":"","structuredPrompt":{"enFull":"","enShort":"","zhFull":"","zhShort":""},"analysis":{"subject":{"main":"","attributes":[],"action":""},"style":{"medium":"","genre":"","mood":"","referenceLook":""},"camera":{"focalLength":"","aperture":"","angle":"","shotType":"","depthOfField":""},"lighting":{"direction":"","quality":"","effect":"","timeOfDay":""},"material":{"surface":"","microDetail":"","opticalProperties":[]},"composition":{"layout":"","subjectPlacement":"","foreground":"","background":"","leadingLines":"","symmetry":""},"environment":{"sceneType":"","backgroundMaterial":"","spatialRelation":""},"rendering":{"priorityTerms":[],"deviceLook":[],"colorGrade":""}},"keywords":[],"drafts":{"enShort":"","enFull":"","zhShort":"","zhFull":""}}',
-    `补充上下文：页面地址 ${payload.pageUrl || "unknown"}；图片 alt ${payload.alt || "none"}。`
+    `补充上下文（仅供参考，必须以图像本身为准，冲突时忽略上下文）：页面地址 ${payload.pageUrl || "unknown"}；图片 alt ${payload.alt || "none"}。`
   ].join("\n");
 }
 
@@ -1204,24 +1210,8 @@ function normalizeStructuredAnalysis(input) {
 }
 
 function fillStructuredDefaults(analysis) {
-  const next = normalizeStructuredAnalysis(analysis);
-
-  if (!next.camera.focalLength) next.camera.focalLength = "50mm";
-  if (!next.camera.angle) next.camera.angle = "eye-level";
-  if (!next.camera.shotType) next.camera.shotType = "medium shot";
-  if (!next.camera.depthOfField) next.camera.depthOfField = "natural depth of field";
-  if (!next.lighting.direction) next.lighting.direction = "natural side lighting";
-  if (!next.lighting.quality) next.lighting.quality = "soft diffusion";
-  if (!next.composition.layout) next.composition.layout = "centered composition";
-  if (!next.composition.subjectPlacement) next.composition.subjectPlacement = "subject centered";
-  if (!next.environment.spatialRelation) {
-    next.environment.spatialRelation = "clear separation between subject and background";
-  }
-  if (!next.rendering.priorityTerms.length) {
-    next.rendering.priorityTerms = ["Extreme fidelity", "Global illumination"];
-  }
-
-  return next;
+  // 只做结构归一化，不填入无法从图中验证的默认镜头/光线/构图参数，避免虚假精度。
+  return normalizeStructuredAnalysis(analysis);
 }
 
 function normalizeStructuredPrompt(input) {
