@@ -98,7 +98,7 @@ panel.innerHTML = `
       </div>
     </section>
 
-    <p class="pg-credit">© 2026 嘉文钱. Licensed under MIT</p>
+    <p class="pg-credit">© 2026 xiaobo</p>
   </div>
 `;
 
