@@ -6,6 +6,7 @@ const statusEl = document.getElementById("status");
 const detailTitle = document.getElementById("detail-title");
 const detailMeta = document.getElementById("detail-meta");
 const detailSource = document.getElementById("detail-source");
+const detailSourceEmpty = document.getElementById("detail-source-empty");
 const detailSourceUrl = document.getElementById("detail-source-url");
 const detailPrompt = document.getElementById("detail-prompt");
 const detailGenerated = document.getElementById("detail-generated");
@@ -113,9 +114,14 @@ async function selectRecord(id) {
 function renderDetail(record) {
   detailTitle.textContent = record.title || "图片提示词";
   detailMeta.textContent = `${formatTime(record.updatedAt)} · 比例 ${record.aspectRatio || "1:1"}`;
-  detailSource.src = record.sourceThumbDataUrl || "";
-  detailSourceUrl.textContent = record.sourceImageUrl || "无源图地址";
+  detailSourceUrl.textContent =
+    !record.sourceImageUrl || record.sourceImageUrl === "local-image"
+      ? "本地/粘贴图片"
+      : record.sourceImageUrl;
   detailPrompt.textContent = getPromptText(record) || "（无提示词）";
+  renderSourcePreview(record).catch(() => {
+    setSourcePreview("", "暂无源图预览");
+  });
 
   const images = Array.isArray(record.generatedImages) ? record.generatedImages : [];
   detailGeneratedCount.textContent = `${images.length} 张`;
@@ -137,6 +143,57 @@ function renderDetail(record) {
       `;
     })
     .join("");
+}
+
+async function renderSourcePreview(record) {
+  setSourcePreview("", "正在加载源图预览...");
+
+  let preview = String(record.sourceThumbDataUrl || "").trim();
+  if (!preview.startsWith("data:image/") && String(record.sourceImageUrl || "").startsWith("data:image/")) {
+    preview = record.sourceImageUrl;
+  }
+
+  if (!preview.startsWith("data:image/") && /^https?:\/\//i.test(record.sourceImageUrl || "")) {
+    try {
+      const result = await sendMessage({
+        type: "resolve-image-preview",
+        payload: { imageUrl: record.sourceImageUrl }
+      });
+      preview = String(result?.dataUrl || "").trim();
+      if (preview.startsWith("data:image/") && record.id) {
+        await sendMessage({
+          type: "save-history",
+          payload: {
+            id: record.id,
+            sourceThumbDataUrl: preview
+          }
+        });
+        record.sourceThumbDataUrl = preview;
+        const listItem = records.find((item) => item.id === record.id);
+        if (listItem) listItem.sourceThumbDataUrl = preview;
+        renderList();
+      }
+    } catch (_error) {
+      preview = "";
+    }
+  }
+
+  if (preview.startsWith("data:image/")) {
+    setSourcePreview(preview);
+    return;
+  }
+
+  setSourcePreview("", "暂无源图预览（跨域防盗链或原图已失效）");
+}
+
+function setSourcePreview(src, emptyText = "暂无源图预览") {
+  const hasPreview = Boolean(src);
+  detailSource.src = src || "";
+  detailSource.classList.toggle("is-hidden", !hasPreview);
+  if (detailSourceEmpty) {
+    detailSourceEmpty.textContent = emptyText;
+    detailSourceEmpty.classList.toggle("is-hidden", hasPreview);
+  }
 }
 
 function getPromptText(record) {

@@ -105,6 +105,8 @@ async function handleMessage(message, sender) {
       return deleteHistoryRecord(message.payload?.id);
     case "clear-history":
       return clearHistoryRecords();
+    case "resolve-image-preview":
+      return resolveImagePreview(message.payload || {});
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
@@ -2743,6 +2745,66 @@ async function openHistoryPage() {
     url: chrome.runtime.getURL("history.html")
   });
   return { opened: true };
+}
+
+async function resolveImagePreview(payload = {}) {
+  const imageUrl = String(payload.imageUrl || "").trim();
+  const imageDataUrl = String(payload.imageDataUrl || "").trim();
+  const pageUrl = String(payload.pageUrl || "").trim();
+
+  if (!imageUrl && !imageDataUrl) {
+    return { dataUrl: "" };
+  }
+
+  try {
+    const part = await fetchImageAsInlineData({
+      imageUrl: imageUrl.startsWith("data:") ? "" : imageUrl,
+      imageDataUrl: imageDataUrl || (imageUrl.startsWith("data:") ? imageUrl : ""),
+      pageUrl
+    });
+    if (!part?.data) return { dataUrl: "" };
+
+    const rawDataUrl = `data:${part.mimeType || "image/png"};base64,${part.data}`;
+    const dataUrl = await compressDataUrlThumbnail(rawDataUrl);
+    return { dataUrl: dataUrl || rawDataUrl };
+  } catch (_error) {
+    return { dataUrl: "" };
+  }
+}
+
+async function compressDataUrlThumbnail(dataUrl, maxEdge = 320) {
+  const src = String(dataUrl || "").trim();
+  if (!src.startsWith("data:image/")) return "";
+
+  try {
+    const response = await fetch(src);
+    const blob = await response.blob();
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return src;
+    }
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const outBlob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.72 });
+    return blobToDataUrl(outBlob);
+  } catch (_error) {
+    return src;
+  }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read image blob."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function saveHistoryRecord(payload = {}) {

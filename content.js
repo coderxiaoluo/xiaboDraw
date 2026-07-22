@@ -14,6 +14,8 @@ const state = {
   hoverImage: null,
   panelImage: null,
   panelOpen: false,
+  panelPinned: false,
+  panelDrag: null,
   currentJob: null,
   historyId: null,
   referenceImages: [],
@@ -39,6 +41,7 @@ panel.innerHTML = `
         <strong class="pg-brand">小波绘词</strong>
       </div>
       <div class="pg-header-actions">
+        <button class="pg-icon-button" id="pg-pin" type="button" aria-label="置顶面板" title="置顶后可拖动面板" aria-pressed="false">📌</button>
         <button class="pg-icon-button" id="pg-open-history" type="button" aria-label="打开历史" title="历史记录">🕑</button>
         <button class="pg-icon-button" id="pg-open-options" type="button" aria-label="打开设置" title="打开设置">⚙</button>
         <button class="pg-icon-button" id="pg-close" type="button" aria-label="关闭" title="关闭">✕</button>
@@ -53,7 +56,7 @@ panel.innerHTML = `
         <div class="pg-source-actions">
           <button class="pg-chip" id="pg-upload-image" type="button">上传图片</button>
           <button class="pg-chip" id="pg-paste-image" type="button">粘贴图片</button>
-          <input id="pg-file-input" type="file" accept="image/*" hidden />
+          <input id="pg-file-input" type="file" accept="image/*" multiple hidden />
         </div>
       </div>
     </div>
@@ -150,6 +153,8 @@ const els = {
   refFile: panel.querySelector("#pg-ref-file"),
   atMenu: panel.querySelector("#pg-at-menu"),
   close: panel.querySelector("#pg-close"),
+  pin: panel.querySelector("#pg-pin"),
+  header: panel.querySelector(".pg-header"),
   openHistory: panel.querySelector("#pg-open-history"),
   openOptions: panel.querySelector("#pg-open-options"),
   detailShort: panel.querySelector("#pg-detail-short"),
@@ -233,6 +238,16 @@ function bindEvents() {
   });
 
   els.close.addEventListener("click", closePanel);
+  els.pin?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePanelPin();
+  });
+  els.header?.addEventListener("pointerdown", handlePanelHeaderPointerDown);
+  window.addEventListener("pointermove", handlePanelPointerMove);
+  window.addEventListener("pointerup", handlePanelPointerUp);
+  window.addEventListener("pointercancel", handlePanelPointerUp);
+  window.addEventListener("resize", clampPinnedPanelPosition);
   els.openHistory?.addEventListener("click", async () => {
     try {
       await sendMessage({ type: "open-history" });
@@ -271,11 +286,11 @@ function bindEvents() {
   });
 
   els.fileInput?.addEventListener("change", async () => {
-    const file = els.fileInput.files?.[0];
+    const files = Array.from(els.fileInput.files || []);
     els.fileInput.value = "";
-    if (!file) return;
+    if (!files.length) return;
     try {
-      await loadLocalImageFile(file, { autoAnalyze: false });
+      await loadLocalImageFiles(files, { autoAnalyze: false });
     } catch (error) {
       handleRuntimeError(error);
     }
@@ -287,10 +302,10 @@ function bindEvents() {
 
   panel.addEventListener("paste", (event) => {
     if (!state.panelOpen) return;
-    const file = getImageFileFromClipboardEvent(event);
-    if (!file) return;
+    const files = getImageFilesFromClipboardEvent(event);
+    if (!files.length) return;
     event.preventDefault();
-    loadLocalImageFile(file, { autoAnalyze: false }).catch(handleRuntimeError);
+    loadLocalImageFiles(files, { autoAnalyze: false }).catch(handleRuntimeError);
   });
 
   els.dropZone?.addEventListener("dragenter", (event) => {
@@ -309,12 +324,12 @@ function bindEvents() {
   els.dropZone?.addEventListener("drop", (event) => {
     event.preventDefault();
     els.dropZone.classList.remove("is-dragover");
-    const file = getImageFileFromDataTransfer(event.dataTransfer);
-    if (!file) {
+    const files = getImageFilesFromDataTransfer(event.dataTransfer);
+    if (!files.length) {
       setStatus("请拖入图片文件。", "error");
       return;
     }
-    loadLocalImageFile(file, { autoAnalyze: false }).catch(handleRuntimeError);
+    loadLocalImageFiles(files, { autoAnalyze: false }).catch(handleRuntimeError);
   });
 
   els.ratioSelect.addEventListener("change", () => {
@@ -658,15 +673,55 @@ async function openPanelForImage(image) {
 }
 
 async function loadLocalImageFile(file, { autoAnalyze = false } = {}) {
-  if (!file || !String(file.type || "").startsWith("image/")) {
+  await loadLocalImageFiles(file ? [file] : [], { autoAnalyze });
+}
+
+async function loadLocalImageFiles(files, { autoAnalyze = false } = {}) {
+  const list = Array.from(files || []).filter((file) => String(file.type || "").startsWith("image/"));
+  if (!list.length) {
     throw new Error("请选择图片文件。");
   }
 
-  const dataUrl = await readFileAsDataUrl(file);
-  await applyLocalImageDataUrl(dataUrl, file.name || "本地图片", { autoAnalyze });
+  if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) {
+    throw new Error(`参考图已满（最多 ${MAX_REFERENCE_IMAGES} 张），请先删除后再添加。`);
+  }
+
+  const remaining = MAX_REFERENCE_IMAGES - state.referenceImages.length;
+  const accepted = list.slice(0, remaining);
+  const skipped = list.length - accepted.length;
+  let lastDataUrl = "";
+  let lastTitle = "";
+  let added = 0;
+
+  for (const file of accepted) {
+    const dataUrl = await readFileAsDataUrl(file);
+    const before = state.referenceImages.length;
+    await addReferenceImageFromDataUrl(dataUrl, { prepend: false, silent: true });
+    if (state.referenceImages.length > before) {
+      added += 1;
+      lastDataUrl = dataUrl;
+      lastTitle = file.name || `本地图片 ${state.referenceImages.length}`;
+    }
+  }
+
+  if (!added) {
+    setStatus("这些图片已在参考图中，未重复添加。");
+    return;
+  }
+
+  await setMainPanelFromLocalImage(lastDataUrl, lastTitle, { autoAnalyze });
+
+  const label = `@图${state.referenceImages.length}`;
+  let message = added === 1
+    ? `已添加参考图 ${label}（${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}）`
+    : `已添加 ${added} 张参考图（${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}），最新为 ${label}`;
+  if (skipped > 0) {
+    message += `；另有 ${skipped} 张因已达上限未加入`;
+  }
+  setStatus(`${message}。可点击「重新识别」识图，或在提示词中用 @图N 引用。`, "success");
 }
 
-async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAnalyze = false } = {}) {
+async function setMainPanelFromLocalImage(dataUrl, title = "本地图片", { autoAnalyze = false } = {}) {
   if (!String(dataUrl || "").startsWith("data:image/")) {
     throw new Error("无法读取图片数据。");
   }
@@ -675,20 +730,14 @@ async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAna
   hideHoverButton();
   state.panelImage = image;
   state.panelOpen = true;
-  state.currentJob = null;
-  state.historyId = null;
-  if (els.img2img) delete els.img2img.dataset.userTouched;
-  clearReferenceImages();
   panel.classList.add("pg-open");
 
   els.previewImage.src = dataUrl;
   els.previewImage.alt = title;
   els.previewImage.classList.remove("is-logo");
   els.imageTitle.textContent = title;
-  els.imageUrl.textContent = "本地/粘贴图片";
+  els.imageUrl.textContent = `本地/粘贴图片 · 参考 ${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}`;
   els.imageUrl.title = title;
-  renderInlineImages([]);
-  await addReferenceImageFromDataUrl(dataUrl, { prepend: true });
 
   try {
     state.settings = await sendMessage({ type: "get-settings" });
@@ -700,23 +749,41 @@ async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAna
   if (cached) {
     hydratePanelData(cached);
     syncAnalyzeAvailability();
-    setStatus("已载入本地图片（使用缓存结果）。", "success");
     return;
   }
 
-  state.panelData = createEmptyPanelData();
-  state.panelData.detail = "full";
-  state.panelData.title = title.slice(0, 40) || "本地图片";
-  state.panelData.aspectRatio = state.settings?.aspectRatio || "1:1";
-  renderRatioSelect();
-  syncGenerationVisibility();
-  syncPromptControls();
+  const hasPrompt = Boolean(getCurrentPrompt().trim());
+  if (!hasPrompt) {
+    state.currentJob = null;
+    state.historyId = null;
+    state.panelData = createEmptyPanelData();
+    state.panelData.detail = "full";
+    state.panelData.title = title.slice(0, 40) || "本地图片";
+    state.panelData.aspectRatio = state.settings?.aspectRatio || "1:1";
+    renderRatioSelect();
+    syncGenerationVisibility();
+    syncPromptControls();
+  } else {
+    state.panelData.title = title.slice(0, 40) || state.panelData.title || "本地图片";
+  }
+
   syncAnalyzeAvailability();
-  setStatus("本地图片已载入，可点击「重新识别」开始识图。");
 
   if (autoAnalyze) {
     await analyzeCurrentImage({ force: true });
   }
+}
+
+async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAnalyze = false } = {}) {
+  if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) {
+    throw new Error(`参考图已满（最多 ${MAX_REFERENCE_IMAGES} 张），请先删除后再添加。`);
+  }
+  await addReferenceImageFromDataUrl(dataUrl, { prepend: false, silent: true });
+  await setMainPanelFromLocalImage(dataUrl, title, { autoAnalyze });
+  setStatus(
+    `已添加参考图 @图${state.referenceImages.length}（${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}）。`,
+    "success"
+  );
 }
 
 function createImageFromDataUrl(dataUrl, alt = "本地图片") {
@@ -737,15 +804,22 @@ async function pasteImageFromClipboard() {
 
   try {
     const items = await navigator.clipboard.read();
+    const files = [];
     for (const item of items) {
       const imageType = item.types.find((type) => type.startsWith("image/"));
       if (!imageType) continue;
       const blob = await item.getType(imageType);
-      const file = new File([blob], `paste-${Date.now()}.png`, { type: blob.type || "image/png" });
-      await loadLocalImageFile(file, { autoAnalyze: false });
+      files.push(
+        new File([blob], `paste-${Date.now()}-${files.length + 1}.png`, {
+          type: blob.type || "image/png"
+        })
+      );
+    }
+    if (!files.length) {
+      setStatus("剪贴板里没有图片，请先复制图片后再粘贴。", "error");
       return;
     }
-    setStatus("剪贴板里没有图片，请先复制图片后再粘贴。", "error");
+    await loadLocalImageFiles(files, { autoAnalyze: false });
   } catch (error) {
     const message = String(error?.message || error || "");
     if (/denied|permission|not allowed/i.test(message)) {
@@ -756,19 +830,32 @@ async function pasteImageFromClipboard() {
   }
 }
 
-function getImageFileFromClipboardEvent(event) {
+function getImageFilesFromClipboardEvent(event) {
+  const files = [];
   const items = Array.from(event.clipboardData?.items || []);
   for (const item of items) {
     if (item.kind === "file" && String(item.type || "").startsWith("image/")) {
-      return item.getAsFile();
+      const file = item.getAsFile();
+      if (file) files.push(file);
     }
   }
-  return getImageFileFromDataTransfer(event.clipboardData);
+  if (files.length) return files;
+  return getImageFilesFromDataTransfer(event.clipboardData);
+}
+
+function getImageFileFromClipboardEvent(event) {
+  return getImageFilesFromClipboardEvent(event)[0] || null;
+}
+
+function getImageFilesFromDataTransfer(dataTransfer) {
+  const files = Array.from(dataTransfer?.files || []).filter((file) =>
+    String(file.type || "").startsWith("image/")
+  );
+  return files;
 }
 
 function getImageFileFromDataTransfer(dataTransfer) {
-  const files = Array.from(dataTransfer?.files || []);
-  return files.find((file) => String(file.type || "").startsWith("image/")) || null;
+  return getImageFilesFromDataTransfer(dataTransfer)[0] || null;
 }
 
 function readFileAsDataUrl(file) {
@@ -782,7 +869,103 @@ function readFileAsDataUrl(file) {
 
 function closePanel() {
   state.panelOpen = false;
+  stopPanelDrag();
   panel.classList.remove("pg-open");
+}
+
+function togglePanelPin() {
+  state.panelPinned = !state.panelPinned;
+  if (state.panelPinned) {
+    ensurePanelDragPosition();
+    panel.classList.add("is-pinned");
+    setStatus("已置顶：拖动标题栏可单独移动面板，页面仍可正常操作。");
+  } else {
+    stopPanelDrag();
+    resetPanelDockPosition();
+    panel.classList.remove("is-pinned");
+    setStatus("已取消置顶，面板回到右上角。");
+  }
+  syncPanelPinUI();
+}
+
+function syncPanelPinUI() {
+  if (!els.pin) return;
+  els.pin.classList.toggle("is-active", state.panelPinned);
+  els.pin.setAttribute("aria-pressed", state.panelPinned ? "true" : "false");
+  els.pin.title = state.panelPinned ? "取消置顶" : "置顶后可拖动面板";
+  els.header?.classList.toggle("is-draggable", state.panelPinned);
+}
+
+function ensurePanelDragPosition() {
+  const rect = panel.getBoundingClientRect();
+  panel.style.left = `${Math.round(rect.left)}px`;
+  panel.style.top = `${Math.round(rect.top)}px`;
+  panel.style.right = "auto";
+  clampPinnedPanelPosition();
+}
+
+function resetPanelDockPosition() {
+  panel.style.left = "";
+  panel.style.top = "";
+  panel.style.right = "";
+}
+
+function clampPinnedPanelPosition() {
+  if (!state.panelPinned || !state.panelOpen) return;
+  const rect = panel.getBoundingClientRect();
+  const margin = 8;
+  const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+  const nextLeft = Math.min(maxLeft, Math.max(margin, rect.left));
+  const nextTop = Math.min(maxTop, Math.max(margin, rect.top));
+  panel.style.left = `${Math.round(nextLeft)}px`;
+  panel.style.top = `${Math.round(nextTop)}px`;
+  panel.style.right = "auto";
+}
+
+function handlePanelHeaderPointerDown(event) {
+  if (!state.panelPinned || !state.panelOpen) return;
+  if (event.button !== 0) return;
+  if (event.target.closest("button, a, input, textarea, select, label")) return;
+
+  const rect = panel.getBoundingClientRect();
+  state.panelDrag = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top
+  };
+  panel.classList.add("is-dragging");
+  els.header?.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function handlePanelPointerMove(event) {
+  if (!state.panelDrag || event.pointerId !== state.panelDrag.pointerId) return;
+  const width = panel.offsetWidth || 360;
+  const height = panel.offsetHeight || 200;
+  const margin = 8;
+  const left = Math.min(
+    Math.max(margin, event.clientX - state.panelDrag.offsetX),
+    Math.max(margin, window.innerWidth - width - margin)
+  );
+  const top = Math.min(
+    Math.max(margin, event.clientY - state.panelDrag.offsetY),
+    Math.max(margin, window.innerHeight - height - margin)
+  );
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+  panel.style.right = "auto";
+}
+
+function handlePanelPointerUp(event) {
+  if (!state.panelDrag) return;
+  if (event?.pointerId !== undefined && event.pointerId !== state.panelDrag.pointerId) return;
+  stopPanelDrag();
+}
+
+function stopPanelDrag() {
+  state.panelDrag = null;
+  panel.classList.remove("is-dragging");
 }
 
 async function analyzeCurrentImage({ force }) {
@@ -837,7 +1020,10 @@ async function analyzeCurrentImage({ force }) {
 
     imageCache.set(cacheKey, cached);
     hydratePanelData(cached);
-    await persistHistoryAfterAnalyze(imageUrl.startsWith("data:") ? "local-image" : imageUrl);
+    await persistHistoryAfterAnalyze(
+      imageUrl.startsWith("data:") ? "local-image" : imageUrl,
+      imageDataUrl
+    );
     setStatus("识别完成，已保存到历史。", "success");
   });
 }
@@ -1180,18 +1366,18 @@ async function addReferenceImageFromFile(file) {
   setStatus(`已添加参考图，可用 @图${state.referenceImages.length} 引用。`);
 }
 
-async function addReferenceImageFromDataUrl(dataUrl, { prepend = false } = {}) {
-  if (!String(dataUrl || "").startsWith("data:image/")) return;
+async function addReferenceImageFromDataUrl(dataUrl, { prepend = false, silent = false } = {}) {
+  if (!String(dataUrl || "").startsWith("data:image/")) return false;
   if (state.referenceImages.some((item) => item.dataUrl === dataUrl)) {
     renderReferenceImages();
     syncImg2ImgAvailability();
-    return;
+    return false;
   }
   if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) {
     if (prepend) {
       state.referenceImages.pop();
     } else {
-      return;
+      throw new Error(`最多添加 ${MAX_REFERENCE_IMAGES} 张参考图。`);
     }
   }
   const item = { id: crypto.randomUUID(), label: "", dataUrl };
@@ -1199,7 +1385,14 @@ async function addReferenceImageFromDataUrl(dataUrl, { prepend = false } = {}) {
   else state.referenceImages.push(item);
   relabelReferenceImages();
   renderReferenceImages();
+  if (els.img2img && !els.img2img.disabled) {
+    els.img2img.checked = true;
+  }
   syncImg2ImgAvailability();
+  if (!silent) {
+    setStatus(`已添加参考图，可用 @图${state.referenceImages.length} 引用。`);
+  }
+  return true;
 }
 
 function removeReferenceImage(index) {
@@ -1336,9 +1529,13 @@ function persistPanelImageCache() {
   imageCache.set(imageUrl, structuredClone(state.panelData));
 }
 
-async function persistHistoryAfterAnalyze(imageUrl) {
+async function persistHistoryAfterAnalyze(imageUrl, preferredDataUrl = "") {
   try {
-    const sourceThumbDataUrl = await createHistoryThumbnail(state.panelImage, els.previewImage?.src || "");
+    const sourceThumbDataUrl = await createHistoryThumbnail(
+      state.panelImage,
+      els.previewImage?.src || "",
+      preferredDataUrl
+    );
     const saved = await sendMessage({
       type: "save-history",
       payload: {
@@ -1361,13 +1558,17 @@ async function persistHistoryAfterAnalyze(imageUrl) {
 async function persistHistoryAfterGenerate() {
   try {
     const imageUrl = state.panelImage?.currentSrc || state.panelImage?.src || "";
-    const sourceThumbDataUrl = await createHistoryThumbnail(state.panelImage, els.previewImage?.src || "");
+    const sourceThumbDataUrl = await createHistoryThumbnail(
+      state.panelImage,
+      els.previewImage?.src || "",
+      imageUrl.startsWith("data:") ? imageUrl : ""
+    );
     const saved = await sendMessage({
       type: "save-history",
       payload: {
         id: state.historyId || undefined,
         title: state.panelData.title || "图片提示词",
-        sourceImageUrl: imageUrl,
+        sourceImageUrl: imageUrl.startsWith("data:") ? "local-image" : imageUrl,
         sourceThumbDataUrl,
         prompts: state.panelData.prompts,
         promptSnapshot: getCurrentPrompt().trim(),
@@ -1381,8 +1582,14 @@ async function persistHistoryAfterGenerate() {
   }
 }
 
-async function createHistoryThumbnail(image, fallbackSrc = "") {
+async function createHistoryThumbnail(image, fallbackSrc = "", preferredDataUrl = "") {
   const maxEdge = 320;
+  const preferred = String(preferredDataUrl || "").trim();
+  if (preferred.startsWith("data:image/")) {
+    const resized = await resizeDataUrlThumbnail(preferred, maxEdge);
+    if (resized) return resized;
+  }
+
   try {
     if (image instanceof HTMLImageElement) {
       const width = Number(image.naturalWidth || image.width) || 0;
@@ -1406,8 +1613,57 @@ async function createHistoryThumbnail(image, fallbackSrc = "") {
   }
 
   const src = String(fallbackSrc || image?.currentSrc || image?.src || "").trim();
-  if (src.startsWith("data:")) return src;
+  if (src.startsWith("data:image/")) {
+    return (await resizeDataUrlThumbnail(src, maxEdge)) || src;
+  }
+
+  if (/^https?:\/\//i.test(src)) {
+    try {
+      const result = await sendMessage({
+        type: "resolve-image-preview",
+        payload: {
+          imageUrl: src,
+          pageUrl: location.href
+        }
+      });
+      if (result?.dataUrl?.startsWith("data:image/")) return result.dataUrl;
+    } catch (_error) {
+      // ignore
+    }
+  }
+
   return "";
+}
+
+function resizeDataUrlThumbnail(dataUrl, maxEdge = 320) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const width = Number(image.naturalWidth || image.width) || 0;
+        const height = Number(image.naturalHeight || image.height) || 0;
+        if (width <= 0 || height <= 0) {
+          resolve(dataUrl);
+          return;
+        }
+        const scale = Math.min(1, maxEdge / Math.max(width, height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.72));
+      } catch (_error) {
+        resolve(dataUrl);
+      }
+    };
+    image.onerror = () => resolve("");
+    image.src = dataUrl;
+  });
 }
 
 function renderInlineImages(images) {

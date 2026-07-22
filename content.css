@@ -217,6 +217,40 @@
   transform: scale(0.94);
 }
 
+.pg-icon-button.is-active {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #93c5fd;
+}
+
+#pg-panel.is-pinned {
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
+#pg-panel.is-dragging {
+  user-select: none;
+  opacity: 0.96;
+}
+
+#pg-panel.is-dragging,
+#pg-panel.is-dragging * {
+  cursor: grabbing !important;
+}
+
+.pg-header.is-draggable {
+  cursor: grab;
+  user-select: none;
+}
+
+.pg-header.is-draggable .pg-brand::after {
+  content: " · 拖动";
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pg-ink-soft);
+}
+
 .pg-chip {
   flex: 0 0 auto;
   min-height: 30px;
