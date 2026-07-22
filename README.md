@@ -1,6 +1,8 @@
 # 小波绘词
 
 小波绘词 是一个 Chrome 浏览器插件，用于分析网页图片，并将图片内容反推为可编辑、可复制、可用于生图的提示词。
+<img width="344" height="1216" alt="image" src="https://github.com/user-attachments/assets/2e7ba427-d0c0-4589-b663-80a2c35a304b" />
+<img width="1254" height="1254" alt="xiaobo-history-ca67c275-3de6-4b66-9b1c-385ec5f70912-1" src="https://github.com/user-attachments/assets/8847304c-1533-4bd1-915f-f21faa6932a6" />
 
 当前版本采用自备 API Key 模式。项目不会内置、提供或托管任何 API Key；用户需要在插件选项页填写自己的服务商配置后使用。
 
