@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>小波绘词 · 历史记录</title>
+    <link rel="stylesheet" href="./history.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero glass">
+        <div>
+          <p class="eyebrow">小波绘词</p>
+          <h1>本地历史记录</h1>
+          <p class="subtitle">识别提示词与生成图片仅保存在本机，最多保留 50 条。</p>
+        </div>
+        <div class="hero-actions">
+          <button id="refresh-history" type="button">刷新</button>
+          <button id="clear-history" type="button" class="danger">清空全部</button>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="glass list-panel">
+          <div class="panel-head">
+            <strong>记录列表</strong>
+            <span id="history-count">0 条</span>
+          </div>
+          <div id="history-list" class="history-list"></div>
+        </aside>
+
+        <section class="glass detail-panel">
+          <div id="history-empty" class="empty-state">
+            <p>还没有历史记录。</p>
+            <p class="hint">在网页上识别图片或生图后，会自动出现在这里。</p>
+          </div>
+
+          <div id="history-detail" class="detail-body is-hidden">
+            <div class="detail-head">
+              <div>
+                <h2 id="detail-title">图片提示词</h2>
+                <p id="detail-meta" class="meta"></p>
+              </div>
+              <div class="detail-actions">
+                <button id="copy-prompt" type="button">复制提示词</button>
+                <button id="delete-record" type="button" class="danger">删除</button>
+              </div>
+            </div>
+
+            <div class="detail-grid">
+              <article class="block">
+                <h3>源图</h3>
+                <div class="thumb-wrap">
+                  <img id="detail-source" alt="源图预览" />
+                </div>
+                <p id="detail-source-url" class="url"></p>
+              </article>
+
+              <article class="block">
+                <h3>提示词</h3>
+                <pre id="detail-prompt" class="prompt-box"></pre>
+              </article>
+            </div>
+
+            <article class="block">
+              <div class="block-head">
+                <h3>生成图片</h3>
+                <span id="detail-generated-count">0 张</span>
+              </div>
+              <div id="detail-generated" class="generated-grid"></div>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <p id="status" class="status"></p>
+    </main>
+
+    <script src="./history.js"></script>
+  </body>
+</html>

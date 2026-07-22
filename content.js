@@ -1,5 +1,11 @@
+if (window.__XIAOBO_DRAW_CONTENT__) {
+  // 防止扩展图标补注入时重复初始化
+} else {
+window.__XIAOBO_DRAW_CONTENT__ = true;
+
 const imageCache = new Map();
 const RATIO_OPTIONS = ["1:1", "3:4", "4:3", "9:16", "16:9"];
+const DEFAULT_PREVIEW_LOGO = chrome.runtime.getURL("icons/icon-128.png");
 let hoverHideTimer = null;
 
 const state = {
@@ -8,6 +14,7 @@ const state = {
   panelImage: null,
   panelOpen: false,
   currentJob: null,
+  historyId: null,
   panelData: createEmptyPanelData(),
   actionState: {
     analyze: false,
@@ -30,16 +37,22 @@ panel.innerHTML = `
         <strong class="pg-brand">小波绘词</strong>
       </div>
       <div class="pg-header-actions">
+        <button class="pg-icon-button" id="pg-open-history" type="button" aria-label="打开历史" title="历史记录">🕑</button>
         <button class="pg-icon-button" id="pg-open-options" type="button" aria-label="打开设置" title="打开设置">⚙</button>
         <button class="pg-icon-button" id="pg-close" type="button" aria-label="关闭" title="关闭">✕</button>
       </div>
     </div>
 
-    <div class="pg-result-bar">
-      <div class="pg-preview"><img id="pg-preview-image" alt="selected image preview" /></div>
-      <div class="pg-title">
+    <div class="pg-result-bar" id="pg-drop-zone">
+      <div class="pg-preview"><img id="pg-preview-image" class="is-logo" src="${chrome.runtime.getURL("icons/icon-128.png")}" alt="小波绘词" /></div>
+      <div class="pg-title pg-source-meta">
         <strong id="pg-image-title">当前图片</strong>
         <span class="pg-image-url" id="pg-image-url" title="">等待选择图片</span>
+        <div class="pg-source-actions">
+          <button class="pg-chip" id="pg-upload-image" type="button">上传图片</button>
+          <button class="pg-chip" id="pg-paste-image" type="button">粘贴图片</button>
+          <input id="pg-file-input" type="file" accept="image/*" hidden />
+        </div>
       </div>
     </div>
 
@@ -55,7 +68,7 @@ panel.innerHTML = `
       </div>
 
       <div class="pg-editor">
-        <textarea class="pg-textarea" id="pg-prompt-input" placeholder="上传图片自动解析 AI 绘图提示词，支持手动编辑、增减画面描述"></textarea>
+        <textarea class="pg-textarea" id="pg-prompt-input" placeholder="输入或粘贴提示词即可生图；也可分析网页图片自动反推"></textarea>
         <span class="pg-char-count" id="pg-char-count">0 字</span>
       </div>
       <div class="pg-structure pg-hidden" id="pg-structure">
@@ -115,6 +128,7 @@ const els = {
   copy: panel.querySelector("#pg-copy"),
   generate: panel.querySelector("#pg-generate"),
   close: panel.querySelector("#pg-close"),
+  openHistory: panel.querySelector("#pg-open-history"),
   openOptions: panel.querySelector("#pg-open-options"),
   detailShort: panel.querySelector("#pg-detail-short"),
   detailFull: panel.querySelector("#pg-detail-full"),
@@ -129,7 +143,11 @@ const els = {
   ratioValue: panel.querySelector("#pg-ratio-value"),
   ratioMenu: panel.querySelector("#pg-ratio-menu"),
   inlinePreview: panel.querySelector("#pg-inline-preview"),
-  inlineGrid: panel.querySelector("#pg-inline-grid")
+  inlineGrid: panel.querySelector("#pg-inline-grid"),
+  dropZone: panel.querySelector("#pg-drop-zone"),
+  uploadImage: panel.querySelector("#pg-upload-image"),
+  pasteImage: panel.querySelector("#pg-paste-image"),
+  fileInput: panel.querySelector("#pg-file-input")
 };
 
 init();
@@ -148,6 +166,7 @@ async function init() {
     console.info("[小波绘词]", error?.message || error);
   } finally {
     bindEvents();
+    bindRuntimeMessages();
   }
 }
 
@@ -190,6 +209,13 @@ function bindEvents() {
   });
 
   els.close.addEventListener("click", closePanel);
+  els.openHistory?.addEventListener("click", async () => {
+    try {
+      await sendMessage({ type: "open-history" });
+    } catch (error) {
+      handleRuntimeError(error);
+    }
+  });
   els.openOptions.addEventListener("click", async () => {
     try {
       await sendMessage({ type: "open-options" });
@@ -209,7 +235,62 @@ function bindEvents() {
   els.toggleTranslation.addEventListener("click", togglePromptLanguage);
   els.toggleStructure.addEventListener("click", toggleStructureView);
   els.analyze.addEventListener("click", () => {
+    if (!state.panelImage) {
+      setStatus("请上传/粘贴图片，或点击网页图片进行识别。", "error");
+      return;
+    }
     analyzeCurrentImage({ force: true }).catch(handleRuntimeError);
+  });
+
+  els.uploadImage?.addEventListener("click", () => {
+    els.fileInput?.click();
+  });
+
+  els.fileInput?.addEventListener("change", async () => {
+    const file = els.fileInput.files?.[0];
+    els.fileInput.value = "";
+    if (!file) return;
+    try {
+      await loadLocalImageFile(file, { autoAnalyze: true });
+    } catch (error) {
+      handleRuntimeError(error);
+    }
+  });
+
+  els.pasteImage?.addEventListener("click", () => {
+    pasteImageFromClipboard().catch(handleRuntimeError);
+  });
+
+  panel.addEventListener("paste", (event) => {
+    if (!state.panelOpen) return;
+    const file = getImageFileFromClipboardEvent(event);
+    if (!file) return;
+    event.preventDefault();
+    loadLocalImageFile(file, { autoAnalyze: true }).catch(handleRuntimeError);
+  });
+
+  els.dropZone?.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    els.dropZone.classList.add("is-dragover");
+  });
+  els.dropZone?.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    els.dropZone.classList.add("is-dragover");
+  });
+  els.dropZone?.addEventListener("dragleave", (event) => {
+    if (event.target === els.dropZone) {
+      els.dropZone.classList.remove("is-dragover");
+    }
+  });
+  els.dropZone?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    els.dropZone.classList.remove("is-dragover");
+    const file = getImageFileFromDataTransfer(event.dataTransfer);
+    if (!file) {
+      setStatus("请拖入图片文件。", "error");
+      return;
+    }
+    loadLocalImageFile(file, { autoAnalyze: true }).catch(handleRuntimeError);
   });
 
   els.ratioSelect.addEventListener("change", () => {
@@ -420,6 +501,54 @@ function hideHoverButton() {
   hoverTrigger.style.display = "none";
 }
 
+function bindRuntimeMessages() {
+  if (!chrome?.runtime?.onMessage) return;
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "open-panel") return undefined;
+
+    openBlankPanel()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        sendResponse({ ok: false, error: error?.message || "打开面板失败。" });
+      });
+    return true;
+  });
+}
+
+async function openBlankPanel() {
+  hideHoverButton();
+  state.panelImage = null;
+  state.panelOpen = true;
+  state.currentJob = null;
+  state.historyId = null;
+  panel.classList.add("pg-open");
+
+  els.previewImage.src = DEFAULT_PREVIEW_LOGO;
+  els.previewImage.alt = "小波绘词";
+  els.previewImage.classList.add("is-logo");
+  els.imageTitle.textContent = "直接生图";
+  els.imageUrl.textContent = "输入提示词后即可生成，无需先识别图片";
+  els.imageUrl.title = "";
+  renderInlineImages([]);
+
+  try {
+    state.settings = await sendMessage({ type: "get-settings" });
+  } catch (error) {
+    handleRuntimeError(error);
+  }
+
+  state.panelData = createEmptyPanelData();
+  state.panelData.detail = "full";
+  state.panelData.title = "直接生图";
+  state.panelData.aspectRatio = state.settings?.aspectRatio || "1:1";
+  renderRatioSelect();
+  syncGenerationVisibility();
+  syncPromptControls();
+  syncAnalyzeAvailability();
+  setStatus("可直接输入提示词生图，也可上传/粘贴图片后识别。");
+  els.input?.focus();
+}
+
 async function openPanelForImage(image) {
   hideHoverButton();
   state.panelImage = image;
@@ -428,10 +557,13 @@ async function openPanelForImage(image) {
 
   const imageUrl = image?.currentSrc || image?.src || "";
   els.previewImage.src = imageUrl;
+  els.previewImage.alt = image?.alt?.trim() || "网页图片";
+  els.previewImage.classList.remove("is-logo");
   els.imageTitle.textContent = image?.alt?.trim() || "网页图片";
   els.imageUrl.textContent = imageUrl || "等待选择图片";
   els.imageUrl.title = imageUrl || "";
   state.currentJob = null;
+  state.historyId = null;
   renderInlineImages([]);
 
   try {
@@ -444,6 +576,7 @@ async function openPanelForImage(image) {
   const cached = imageCache.get(imageUrl);
   if (cached) {
     hydratePanelData(cached);
+    syncAnalyzeAvailability();
     return;
   }
 
@@ -453,11 +586,141 @@ async function openPanelForImage(image) {
   renderRatioSelect();
   syncGenerationVisibility();
   syncPromptControls();
+  syncAnalyzeAvailability();
   setStatus("等待识别...");
 
   if (state.settings?.autoAnalyze) {
     await analyzeCurrentImage({ force: false });
   }
+}
+
+function syncAnalyzeAvailability() {
+  const canAnalyze = Boolean(state.panelImage);
+  els.analyze.disabled = !canAnalyze;
+  els.analyze.title = canAnalyze ? "重新识别当前图片" : "请先上传、粘贴或选择网页图片";
+  els.analyze.classList.toggle("is-disabled", !canAnalyze);
+}
+
+async function loadLocalImageFile(file, { autoAnalyze = true } = {}) {
+  if (!file || !String(file.type || "").startsWith("image/")) {
+    throw new Error("请选择图片文件。");
+  }
+
+  const dataUrl = await readFileAsDataUrl(file);
+  await applyLocalImageDataUrl(dataUrl, file.name || "本地图片", { autoAnalyze });
+}
+
+async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAnalyze = true } = {}) {
+  if (!String(dataUrl || "").startsWith("data:image/")) {
+    throw new Error("无法读取图片数据。");
+  }
+
+  const image = await createImageFromDataUrl(dataUrl, title);
+  hideHoverButton();
+  state.panelImage = image;
+  state.panelOpen = true;
+  state.currentJob = null;
+  state.historyId = null;
+  panel.classList.add("pg-open");
+
+  els.previewImage.src = dataUrl;
+  els.previewImage.alt = title;
+  els.previewImage.classList.remove("is-logo");
+  els.imageTitle.textContent = title;
+  els.imageUrl.textContent = "本地/粘贴图片";
+  els.imageUrl.title = title;
+  renderInlineImages([]);
+
+  try {
+    state.settings = await sendMessage({ type: "get-settings" });
+  } catch (error) {
+    handleRuntimeError(error);
+  }
+
+  const cached = imageCache.get(dataUrl);
+  if (cached) {
+    hydratePanelData(cached);
+    syncAnalyzeAvailability();
+    setStatus("已载入本地图片（使用缓存结果）。", "success");
+    return;
+  }
+
+  state.panelData = createEmptyPanelData();
+  state.panelData.detail = "full";
+  state.panelData.title = title.slice(0, 40) || "本地图片";
+  state.panelData.aspectRatio = state.settings?.aspectRatio || "1:1";
+  renderRatioSelect();
+  syncGenerationVisibility();
+  syncPromptControls();
+  syncAnalyzeAvailability();
+  setStatus("本地图片已载入，准备识别...");
+
+  if (autoAnalyze) {
+    await analyzeCurrentImage({ force: true });
+  } else {
+    setStatus("本地图片已载入，可点击「重新识别」。");
+  }
+}
+
+function createImageFromDataUrl(dataUrl, alt = "本地图片") {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.alt = alt;
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("图片加载失败，请换一张再试。"));
+    image.src = dataUrl;
+  });
+}
+
+async function pasteImageFromClipboard() {
+  if (!navigator.clipboard?.read) {
+    setStatus("当前环境不支持读取剪贴板，请使用 Ctrl+V 粘贴到面板。", "error");
+    return;
+  }
+
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imageType = item.types.find((type) => type.startsWith("image/"));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      const file = new File([blob], `paste-${Date.now()}.png`, { type: blob.type || "image/png" });
+      await loadLocalImageFile(file, { autoAnalyze: true });
+      return;
+    }
+    setStatus("剪贴板里没有图片，请先复制图片后再粘贴。", "error");
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    if (/denied|permission|not allowed/i.test(message)) {
+      setStatus("未获得剪贴板权限，请点击面板后按 Ctrl+V 粘贴图片。", "error");
+      return;
+    }
+    throw error;
+  }
+}
+
+function getImageFileFromClipboardEvent(event) {
+  const items = Array.from(event.clipboardData?.items || []);
+  for (const item of items) {
+    if (item.kind === "file" && String(item.type || "").startsWith("image/")) {
+      return item.getAsFile();
+    }
+  }
+  return getImageFileFromDataTransfer(event.clipboardData);
+}
+
+function getImageFileFromDataTransfer(dataTransfer) {
+  const files = Array.from(dataTransfer?.files || []);
+  return files.find((file) => String(file.type || "").startsWith("image/")) || null;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("读取本地图片失败。"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function closePanel() {
@@ -477,12 +740,16 @@ async function analyzeCurrentImage({ force }) {
   }
 
   await runAction("analyze", "正在识别图片内容...", async () => {
-    const imageDataUrl = await captureImageDataUrl(state.panelImage);
-    const screenshotCrop = getImageViewportCrop(state.panelImage);
+    const imageDataUrl = imageUrl.startsWith("data:")
+      ? imageUrl
+      : await captureImageDataUrl(state.panelImage);
+    const screenshotCrop = imageUrl.startsWith("data:")
+      ? null
+      : getImageViewportCrop(state.panelImage);
     const result = await sendMessage({
       type: "analyze-image",
       payload: {
-        imageUrl,
+        imageUrl: imageUrl.startsWith("data:") ? "" : imageUrl,
         imageDataUrl,
         screenshotCrop,
         pageUrl: location.href,
@@ -490,6 +757,7 @@ async function analyzeCurrentImage({ force }) {
       }
     });
 
+    const cacheKey = imageUrl;
     const cached = {
       title: result.title || "图片提示词",
       detail: state.panelData.detail || "full",
@@ -510,8 +778,10 @@ async function analyzeCurrentImage({ force }) {
       }
     };
 
-    imageCache.set(imageUrl, cached);
+    imageCache.set(cacheKey, cached);
     hydratePanelData(cached);
+    await persistHistoryAfterAnalyze(imageUrl.startsWith("data:") ? "local-image" : imageUrl);
+    setStatus("识别完成，已保存到历史。", "success");
   });
 }
 
@@ -548,6 +818,7 @@ function hydratePanelData(data) {
   syncGenerationVisibility();
   syncPromptControls();
   renderStructureView();
+  syncAnalyzeAvailability();
   setStatus("识别完成，可直接编辑。", "success");
 }
 
@@ -737,7 +1008,8 @@ async function generateFromCurrentPrompt() {
     };
 
     renderInlineImages(state.currentJob.images);
-    setStatus("生图完成，预览已更新。", "success");
+    await persistHistoryAfterGenerate();
+    setStatus("生图完成，预览已更新，已保存到历史。", "success");
   });
 }
 
@@ -746,6 +1018,80 @@ function persistPanelImageCache() {
   const imageUrl = state.panelImage.currentSrc || state.panelImage.src;
   if (!imageUrl) return;
   imageCache.set(imageUrl, structuredClone(state.panelData));
+}
+
+async function persistHistoryAfterAnalyze(imageUrl) {
+  try {
+    const sourceThumbDataUrl = await createHistoryThumbnail(state.panelImage, els.previewImage?.src || "");
+    const saved = await sendMessage({
+      type: "save-history",
+      payload: {
+        id: state.historyId || undefined,
+        title: state.panelData.title || "图片提示词",
+        sourceImageUrl: imageUrl || "",
+        sourceThumbDataUrl,
+        prompts: state.panelData.prompts,
+        promptSnapshot: getCurrentPrompt().trim(),
+        aspectRatio: state.panelData.aspectRatio || state.settings?.aspectRatio || "1:1",
+        generatedImages: state.currentJob?.images || []
+      }
+    });
+    state.historyId = saved?.id || state.historyId;
+  } catch (error) {
+    console.info("[小波绘词] 保存历史失败", error?.message || error);
+  }
+}
+
+async function persistHistoryAfterGenerate() {
+  try {
+    const imageUrl = state.panelImage?.currentSrc || state.panelImage?.src || "";
+    const sourceThumbDataUrl = await createHistoryThumbnail(state.panelImage, els.previewImage?.src || "");
+    const saved = await sendMessage({
+      type: "save-history",
+      payload: {
+        id: state.historyId || undefined,
+        title: state.panelData.title || "图片提示词",
+        sourceImageUrl: imageUrl,
+        sourceThumbDataUrl,
+        prompts: state.panelData.prompts,
+        promptSnapshot: getCurrentPrompt().trim(),
+        aspectRatio: state.panelData.aspectRatio || state.settings?.aspectRatio || "1:1",
+        generatedImages: state.currentJob?.images || []
+      }
+    });
+    state.historyId = saved?.id || state.historyId;
+  } catch (error) {
+    console.info("[小波绘词] 保存历史失败", error?.message || error);
+  }
+}
+
+async function createHistoryThumbnail(image, fallbackSrc = "") {
+  const maxEdge = 320;
+  try {
+    if (image instanceof HTMLImageElement) {
+      const width = Number(image.naturalWidth || image.width) || 0;
+      const height = Number(image.naturalHeight || image.height) || 0;
+      if (width > 0 && height > 0) {
+        const scale = Math.min(1, maxEdge / Math.max(width, height));
+        const targetWidth = Math.max(1, Math.round(width * scale));
+        const targetHeight = Math.max(1, Math.round(height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+          return canvas.toDataURL("image/jpeg", 0.72);
+        }
+      }
+    }
+  } catch (_error) {
+    // 跨域可能污染 canvas，继续走 fallback
+  }
+
+  const src = String(fallbackSrc || image?.currentSrc || image?.src || "").trim();
+  if (src.startsWith("data:")) return src;
+  return "";
 }
 
 function renderInlineImages(images) {
@@ -815,6 +1161,14 @@ async function runAction(actionName, statusText, task) {
 function syncActionState() {
   els.analyze.classList.toggle("is-busy", state.actionState.analyze);
   els.generate.classList.toggle("is-busy", state.actionState.generate);
+  syncAnalyzeAvailability();
+}
+
+function syncAnalyzeAvailability() {
+  const canAnalyze = Boolean(state.panelImage);
+  els.analyze.disabled = !canAnalyze;
+  els.analyze.title = canAnalyze ? "重新识别当前图片" : "请先选择网页图片后再识别";
+  els.analyze.classList.toggle("is-disabled", !canAnalyze);
 }
 
 function syncGenerationVisibility() {
@@ -945,3 +1299,5 @@ async function sendMessage(message) {
   }
   return response.data;
 }
+
+} // end __XIAOBO_DRAW_CONTENT__ guard

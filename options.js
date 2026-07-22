@@ -1,6 +1,7 @@
 const form = document.getElementById("settings-form");
 const statusEl = document.getElementById("status");
 const docButton = document.getElementById("open-doc");
+const historyButton = document.getElementById("open-history");
 const promptProviderField = document.querySelector('[name="promptProvider"]');
 const imageProviderField = document.querySelector('[name="imageProvider"]');
 const imageGenerationEnabledField = document.querySelector('[name="imageGenerationEnabled"]');
@@ -91,6 +92,20 @@ docButton.addEventListener("click", () => {
     return;
   }
   window.open(url, "_blank", "noopener");
+});
+
+historyButton?.addEventListener("click", async () => {
+  if (!hasExtensionRuntime()) {
+    statusEl.textContent = "请从 Chrome 扩展的设置页打开，不要直接打开本地 options.html 文件。";
+    return;
+  }
+
+  try {
+    await sendMessage({ type: "open-history" });
+    statusEl.textContent = "已打开历史记录页。";
+  } catch (error) {
+    statusEl.textContent = error.message || "打开历史失败。";
+  }
 });
 
 function hydrateForm(settings) {
@@ -188,7 +203,7 @@ function syncPromptProviderUI(provider) {
   const promptBaseUrlField = getField("promptBaseUrl");
 
   if (promptModelField) {
-    promptModelField.placeholder = isOpenAICompatible ? "gpt-5.5" : "gemini-3.1-pro-preview";
+    promptModelField.placeholder = isOpenAICompatible ? "gpt-4o" : "gemini-3.1-pro-preview";
   }
   if (promptBaseUrlField) {
     promptBaseUrlField.placeholder = isOpenAICompatible
@@ -197,7 +212,7 @@ function syncPromptProviderUI(provider) {
   }
   if (promptModelHelp) {
     promptModelHelp.textContent = isOpenAICompatible
-      ? "OpenAI 兼容识图默认可先用 gpt-5.5。"
+      ? "OpenAI 兼容识图默认可先用 gpt-4o。"
       : "Gemini 例如 gemini-3.1-pro-preview。";
   }
   if (promptBaseUrlHelp) {
@@ -260,7 +275,7 @@ function getPromptProviderDefaults(provider) {
   if (provider === "openai-compatible") {
     return {
       apiKey: "",
-      model: "gpt-5.5",
+      model: "gpt-4o",
       baseUrl: "https://api.openai.com/v1",
       autoAnalyze: true
     };

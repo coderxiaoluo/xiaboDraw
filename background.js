@@ -30,7 +30,7 @@ const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const TEMP_IMAGE_MODEL = "imagen-4.0-generate-001";
 const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const OPENAI_DEFAULT_PROMPT_MODEL = "gpt-4.1-mini";
+const OPENAI_DEFAULT_PROMPT_MODEL = "gpt-4o";
 const OPENAI_LATEST_IMAGE_MODEL = "gpt-image-2";
 const OPENAI_IMAGE_SIZE_BY_RATIO = {
   "1:1": "1024x1024",
@@ -42,8 +42,11 @@ const OPENAI_IMAGE_SIZE_BY_RATIO = {
 const SUPPORTED_PROVIDERS = ["gemini", "openai-compatible"];
 
 const VIEWER_DB_NAME = "image-lens-db";
+const VIEWER_DB_VERSION = 2;
 const VIEWER_STORE_NAME = "viewer_payloads";
 const VIEWER_RECORD_ID = "current";
+const HISTORY_STORE_NAME = "history_records";
+const HISTORY_MAX_RECORDS = 50;
 
 chrome.runtime.onInstalled.addListener(async () => {
   const existing = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
@@ -53,6 +56,12 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (Object.keys(missing).length > 0) {
     await chrome.storage.local.set(missing);
   }
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  openPanelFromAction(tab).catch((error) => {
+    console.error("[小波绘词]", error);
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -80,6 +89,18 @@ async function handleMessage(message, sender) {
       return openViewer(message.payload || {});
     case "open-options":
       return openOptionsPage();
+    case "open-history":
+      return openHistoryPage();
+    case "save-history":
+      return saveHistoryRecord(message.payload || {});
+    case "list-history":
+      return listHistoryRecords();
+    case "get-history":
+      return getHistoryRecord(message.payload?.id);
+    case "delete-history":
+      return deleteHistoryRecord(message.payload?.id);
+    case "clear-history":
+      return clearHistoryRecords();
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
@@ -524,7 +545,7 @@ function sanitizeImageProviderProfile(provider, input) {
 function getPromptProviderDefaults(provider) {
   return {
     apiKey: "",
-    model: provider === "openai-compatible" ? "gpt-5.5" : DEFAULT_PROMPT_MODEL,
+    model: provider === "openai-compatible" ? OPENAI_DEFAULT_PROMPT_MODEL : DEFAULT_PROMPT_MODEL,
     baseUrl: getProviderBaseUrl(provider),
     autoAnalyze: true
   };
@@ -592,7 +613,7 @@ function getProviderDefaults(provider) {
     return {
       apiMode: "direct",
       promptApiKey: "",
-      promptModel: "gpt-5.5",
+      promptModel: OPENAI_DEFAULT_PROMPT_MODEL,
       imageGenerationEnabled: true,
       imageApiKey: "",
       imageModel: OPENAI_LATEST_IMAGE_MODEL,
@@ -818,14 +839,28 @@ async function generateImageWithGemini(settings, payload, prompt) {
 async function generateImageWithOpenAICompatible(settings, payload, prompt) {
   const size = mapAspectRatioToOpenAIImageSize(payload.aspectRatio || settings.aspectRatio || "1:1");
   const count = clampImageCount(payload.count || settings.imageCount || 1);
-  const response = await callOpenAICompatibleImagesGenerate({
+  const baseRequest = {
     baseUrl: settings.imageBaseUrl,
     apiKey: settings.imageApiKey,
     model: settings.imageModel || OPENAI_LATEST_IMAGE_MODEL,
     prompt,
     n: count,
     size
-  });
+  };
+
+  let response;
+  try {
+    response = await callOpenAICompatibleImagesGenerate({
+      ...baseRequest,
+      response_format: "b64_json"
+    });
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    if (!/response_format|b64_json|unsupported|unknown|invalid/i.test(message)) {
+      throw error;
+    }
+    response = await callOpenAICompatibleImagesGenerate(baseRequest);
+  }
 
   return extractImagesFromOpenAICompatible(response);
 }
@@ -833,6 +868,36 @@ async function generateImageWithOpenAICompatible(settings, payload, prompt) {
 async function openOptionsPage() {
   await chrome.runtime.openOptionsPage();
   return { opened: true };
+}
+
+async function openPanelFromAction(tab) {
+  const tabId = tab?.id;
+  const tabUrl = String(tab?.url || "");
+
+  if (!tabId || !isInjectableTabUrl(tabUrl)) {
+    await openOptionsPage();
+    return { opened: "options" };
+  }
+
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "open-panel" });
+    return { opened: "panel" };
+  } catch (_error) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ["content.css"]
+    });
+    await chrome.tabs.sendMessage(tabId, { type: "open-panel" });
+    return { opened: "panel-injected" };
+  }
+}
+
+function isInjectableTabUrl(url) {
+  return /^(https?:|file:)/i.test(String(url || ""));
 }
 
 function ensurePromptApiKey(settings) {
@@ -968,20 +1033,60 @@ function extractTextFromOpenAICompatible(data) {
   return "";
 }
 
-function extractImagesFromOpenAICompatible(data) {
+async function extractImagesFromOpenAICompatible(data) {
   const items = Array.isArray(data?.data) ? data.data : [];
+  const images = [];
 
-  return items
-    .map((item) => {
-      if (item?.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
-      }
-      if (item?.url) {
-        return item.url;
-      }
-      return "";
-    })
-    .filter(Boolean);
+  for (const item of items) {
+    const normalized = await normalizeOpenAICompatibleImageItem(item);
+    if (normalized) images.push(normalized);
+  }
+
+  return images;
+}
+
+async function normalizeOpenAICompatibleImageItem(item) {
+  if (!item || typeof item !== "object") return null;
+
+  const rawBase64 = item.b64_json || item.b64Json || item.base64 || "";
+  if (rawBase64) {
+    if (String(rawBase64).startsWith("data:")) {
+      const parsed = parseDataUrlImage(rawBase64);
+      return {
+        mimeType: parsed.mimeType,
+        base64Data: parsed.data
+      };
+    }
+
+    return {
+      mimeType: "image/png",
+      base64Data: String(rawBase64).replace(/\s+/g, "")
+    };
+  }
+
+  const imageUrl = String(item.url || "").trim();
+  if (!imageUrl) return null;
+
+  if (imageUrl.startsWith("data:")) {
+    const parsed = parseDataUrlImage(imageUrl);
+    return {
+      mimeType: parsed.mimeType,
+      base64Data: parsed.data
+    };
+  }
+
+  const fetched = await fetchImageAsInlineData({
+    imageUrl,
+    imageDataUrl: "",
+    pageUrl: "",
+    screenshotCrop: null,
+    sender: null
+  });
+
+  return {
+    mimeType: fetched.mimeType || "image/png",
+    base64Data: fetched.data
+  };
 }
 
 function mapAspectRatioToOpenAIImageSize(aspectRatio) {
@@ -2284,6 +2389,194 @@ async function openViewerTab() {
   });
 }
 
+async function openHistoryPage() {
+  await chrome.tabs.create({
+    url: chrome.runtime.getURL("history.html")
+  });
+  return { opened: true };
+}
+
+async function saveHistoryRecord(payload = {}) {
+  const now = Date.now();
+  const existingId = String(payload.id || "").trim();
+  const existing = existingId ? await getHistoryRecord(existingId) : null;
+
+  const record = {
+    id: existing?.id || existingId || crypto.randomUUID(),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    title: normalizeHistoryText(payload.title || existing?.title || "图片提示词", 40),
+    sourceImageUrl: String(payload.sourceImageUrl || existing?.sourceImageUrl || "").trim(),
+    sourceThumbDataUrl: String(payload.sourceThumbDataUrl || existing?.sourceThumbDataUrl || "").trim(),
+    prompts: normalizeHistoryPrompts(payload.prompts || existing?.prompts),
+    promptSnapshot: String(payload.promptSnapshot || existing?.promptSnapshot || "").trim(),
+    generatedImages: normalizeHistoryImages(
+      payload.generatedImages !== undefined ? payload.generatedImages : existing?.generatedImages
+    ),
+    aspectRatio: String(payload.aspectRatio || existing?.aspectRatio || "1:1").trim() || "1:1"
+  };
+
+  if (!record.promptSnapshot) {
+    record.promptSnapshot =
+      record.prompts.full?.zh ||
+      record.prompts.full?.en ||
+      record.prompts.short?.zh ||
+      record.prompts.short?.en ||
+      "";
+  }
+
+  const db = await openAppDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE_NAME, "readwrite");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    const request = store.put(record);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error || new Error("Failed to save history record."));
+  });
+  db.close();
+
+  await pruneHistoryRecords(HISTORY_MAX_RECORDS);
+  return record;
+}
+
+async function listHistoryRecords() {
+  const db = await openAppDb();
+  const records = await new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE_NAME, "readonly");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error || new Error("Failed to list history records."));
+  });
+  db.close();
+
+  return records
+    .map((item) => ({
+      id: item.id,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      title: item.title || "图片提示词",
+      sourceImageUrl: item.sourceImageUrl || "",
+      sourceThumbDataUrl: item.sourceThumbDataUrl || "",
+      promptSnapshot: item.promptSnapshot || "",
+      aspectRatio: item.aspectRatio || "1:1",
+      hasGeneratedImages: Array.isArray(item.generatedImages) && item.generatedImages.length > 0,
+      generatedCount: Array.isArray(item.generatedImages) ? item.generatedImages.length : 0
+    }))
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function getHistoryRecord(id) {
+  const recordId = String(id || "").trim();
+  if (!recordId) return null;
+
+  const db = await openAppDb();
+  const record = await new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE_NAME, "readonly");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    const request = store.get(recordId);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error || new Error("Failed to read history record."));
+  });
+  db.close();
+  return record;
+}
+
+async function deleteHistoryRecord(id) {
+  const recordId = String(id || "").trim();
+  if (!recordId) {
+    throw new Error("Missing history record id.");
+  }
+
+  const db = await openAppDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE_NAME, "readwrite");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    const request = store.delete(recordId);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error || new Error("Failed to delete history record."));
+  });
+  db.close();
+  return { deleted: true, id: recordId };
+}
+
+async function clearHistoryRecords() {
+  const db = await openAppDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE_NAME, "readwrite");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    const request = store.clear();
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error || new Error("Failed to clear history records."));
+  });
+  db.close();
+  return { cleared: true };
+}
+
+async function pruneHistoryRecords(maxRecords = HISTORY_MAX_RECORDS) {
+  const db = await openAppDb();
+  const records = await new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE_NAME, "readonly");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    const request = store.getAll();
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error || new Error("Failed to prune history records."));
+  });
+  db.close();
+
+  if (records.length <= maxRecords) return;
+
+  const sorted = [...records].sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
+  const overflow = sorted.slice(0, records.length - maxRecords);
+  if (overflow.length === 0) return;
+
+  const pruneDb = await openAppDb();
+  await new Promise((resolve, reject) => {
+    const tx = pruneDb.transaction(HISTORY_STORE_NAME, "readwrite");
+    const store = tx.objectStore(HISTORY_STORE_NAME);
+    overflow.forEach((item) => store.delete(item.id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to prune history records."));
+  });
+  pruneDb.close();
+}
+
+function normalizeHistoryText(value, maxLength = 80) {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return text.slice(0, maxLength);
+}
+
+function normalizeHistoryPrompts(input) {
+  const source = input && typeof input === "object" ? input : {};
+  return {
+    short: {
+      en: String(source.short?.en || "").trim(),
+      zh: String(source.short?.zh || "").trim()
+    },
+    full: {
+      en: String(source.full?.en || "").trim(),
+      zh: String(source.full?.zh || "").trim()
+    }
+  };
+}
+
+function normalizeHistoryImages(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((image) => {
+      const base64Data = String(image?.base64Data || "").replace(/\s+/g, "");
+      if (!base64Data) return null;
+      return {
+        mimeType: String(image?.mimeType || "image/png").trim() || "image/png",
+        base64Data
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeImageUrl(url) {
   const normalized = String(url || "").trim();
   if (!normalized) return "";
@@ -2295,7 +2588,7 @@ function ensureTrailingSlash(url) {
 }
 
 async function writeViewerPayload(payload) {
-  const db = await openViewerDb();
+  const db = await openAppDb();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(VIEWER_STORE_NAME, "readwrite");
     const store = tx.objectStore(VIEWER_STORE_NAME);
@@ -2306,16 +2599,20 @@ async function writeViewerPayload(payload) {
   db.close();
 }
 
-function openViewerDb() {
+function openAppDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(VIEWER_DB_NAME, 1);
+    const request = indexedDB.open(VIEWER_DB_NAME, VIEWER_DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(VIEWER_STORE_NAME)) {
         db.createObjectStore(VIEWER_STORE_NAME, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(HISTORY_STORE_NAME)) {
+        const historyStore = db.createObjectStore(HISTORY_STORE_NAME, { keyPath: "id" });
+        historyStore.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("Failed to open viewer database."));
+    request.onerror = () => reject(request.error || new Error("Failed to open app database."));
   });
 }

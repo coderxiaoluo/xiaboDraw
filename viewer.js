@@ -5,8 +5,10 @@ const downloadImagesButton = document.getElementById("download-images");
 
 let currentPayload = null;
 const VIEWER_DB_NAME = "image-lens-db";
+const VIEWER_DB_VERSION = 2;
 const VIEWER_STORE_NAME = "viewer_payloads";
 const VIEWER_RECORD_ID = "current";
+const HISTORY_STORE_NAME = "history_records";
 
 init();
 
@@ -83,11 +85,15 @@ async function readViewerPayload() {
 
 function openViewerDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(VIEWER_DB_NAME, 1);
+    const request = indexedDB.open(VIEWER_DB_NAME, VIEWER_DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(VIEWER_STORE_NAME)) {
         db.createObjectStore(VIEWER_STORE_NAME, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(HISTORY_STORE_NAME)) {
+        const historyStore = db.createObjectStore(HISTORY_STORE_NAME, { keyPath: "id" });
+        historyStore.createIndex("updatedAt", "updatedAt", { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);

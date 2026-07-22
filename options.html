@@ -47,7 +47,7 @@
             <label class="field">
               <span>识别图片模型</span>
               <input name="promptModel" type="text" placeholder="gemini-3.1-pro-preview" />
-              <small id="prompt-model-help">Gemini 例如 `gemini-3.1-pro-preview`；OpenAI 兼容默认可用 `gpt-5.5`。</small>
+              <small id="prompt-model-help">Gemini 例如 `gemini-3.1-pro-preview`；OpenAI 兼容默认可用 `gpt-4o`。</small>
             </label>
 
             <label class="field toggle">
@@ -98,6 +98,7 @@
 
           <div class="actions">
             <button class="primary" type="submit">保存设置</button>
+            <button id="open-history" type="button">打开历史记录</button>
             <button id="open-doc" type="button">查看文档</button>
           </div>
           <p class="note">提示：这是一个自备 API Key 模式的插件，安装后需要填写自己的 API Key 才能使用。</p>
