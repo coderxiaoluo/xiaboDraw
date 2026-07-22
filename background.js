@@ -32,6 +32,9 @@ const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1bet
 const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_DEFAULT_PROMPT_MODEL = "gpt-4o";
 const OPENAI_LATEST_IMAGE_MODEL = "gpt-image-2";
+const VOLCENGINE_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const VOLCENGINE_DEFAULT_PROMPT_MODEL = "doubao-1.5-vision-pro";
+const VOLCENGINE_DEFAULT_IMAGE_MODEL = "doubao-seedream-4-0-250828";
 const OPENAI_IMAGE_SIZE_BY_RATIO = {
   "1:1": "1024x1024",
   "3:4": "1024x1536",
@@ -39,7 +42,8 @@ const OPENAI_IMAGE_SIZE_BY_RATIO = {
   "9:16": "1024x1792",
   "16:9": "1792x1024"
 };
-const SUPPORTED_PROVIDERS = ["gemini", "openai-compatible"];
+const SUPPORTED_PROVIDERS = ["gemini", "openai-compatible", "volcengine"];
+const OPENAI_STYLE_PROVIDERS = ["openai-compatible", "volcengine"];
 
 const VIEWER_DB_NAME = "image-lens-db";
 const VIEWER_DB_VERSION = 2;
@@ -547,7 +551,7 @@ function sanitizeImageProviderProfile(provider, input) {
 function getPromptProviderDefaults(provider) {
   return {
     apiKey: "",
-    model: provider === "openai-compatible" ? OPENAI_DEFAULT_PROMPT_MODEL : DEFAULT_PROMPT_MODEL,
+    model: getDefaultPromptModel(provider),
     baseUrl: getProviderBaseUrl(provider),
     autoAnalyze: true
   };
@@ -556,14 +560,38 @@ function getPromptProviderDefaults(provider) {
 function getImageProviderDefaults(provider) {
   return {
     apiKey: "",
-    model: provider === "openai-compatible" ? OPENAI_LATEST_IMAGE_MODEL : DEFAULT_IMAGE_MODEL,
+    model: getDefaultImageModel(provider),
     baseUrl: getProviderBaseUrl(provider),
     imageGenerationEnabled: true
   };
 }
 
+function getDefaultPromptModel(provider) {
+  if (provider === "openai-compatible") return OPENAI_DEFAULT_PROMPT_MODEL;
+  if (provider === "volcengine") return VOLCENGINE_DEFAULT_PROMPT_MODEL;
+  return DEFAULT_PROMPT_MODEL;
+}
+
+function getDefaultImageModel(provider) {
+  if (provider === "openai-compatible") return OPENAI_LATEST_IMAGE_MODEL;
+  if (provider === "volcengine") return VOLCENGINE_DEFAULT_IMAGE_MODEL;
+  return DEFAULT_IMAGE_MODEL;
+}
+
 function getProviderBaseUrl(provider) {
-  return provider === "openai-compatible" ? OPENAI_DEFAULT_BASE_URL : GEMINI_DEFAULT_BASE_URL;
+  if (provider === "openai-compatible") return OPENAI_DEFAULT_BASE_URL;
+  if (provider === "volcengine") return VOLCENGINE_DEFAULT_BASE_URL;
+  return GEMINI_DEFAULT_BASE_URL;
+}
+
+function getProviderApiPath(provider) {
+  if (provider === "openai-compatible") return "/v1";
+  if (provider === "volcengine") return "/api/v3";
+  return "/v1beta";
+}
+
+function isOpenAIStyleProvider(provider) {
+  return OPENAI_STYLE_PROVIDERS.includes(provider);
 }
 
 function normalizeProviderBaseUrl(provider, input) {
@@ -588,7 +616,7 @@ function normalizeProviderBaseUrl(provider, input) {
 
   let pathname = parsed.pathname.replace(/\/+$/, "");
   if (!pathname || pathname === "/") {
-    pathname = provider === "openai-compatible" ? "/v1" : "/v1beta";
+    pathname = getProviderApiPath(provider);
   }
 
   parsed.pathname = pathname;
@@ -597,9 +625,10 @@ function normalizeProviderBaseUrl(provider, input) {
   return parsed.toString().replace(/\/+$/, "");
 }
 
-function buildOpenAICompatibleUrl(baseUrl, path) {
+function buildOpenAICompatibleUrl(baseUrl, path, provider = "openai-compatible") {
+  const styleProvider = isOpenAIStyleProvider(provider) ? provider : "openai-compatible";
   const normalizedBaseUrl =
-    normalizeProviderBaseUrl("openai-compatible", baseUrl) || OPENAI_DEFAULT_BASE_URL;
+    normalizeProviderBaseUrl(styleProvider, baseUrl) || getProviderBaseUrl(styleProvider);
   return new URL(path.replace(/^\//, ""), ensureTrailingSlash(normalizedBaseUrl)).toString();
 }
 
@@ -611,6 +640,9 @@ function buildGeminiUrl(baseUrl, path) {
 function getLegacyProfileBaseUrl(legacyProfile, provider) {
   if (provider === "openai-compatible") {
     return String(legacyProfile?.openaiBaseUrl || OPENAI_DEFAULT_BASE_URL);
+  }
+  if (provider === "volcengine") {
+    return String(legacyProfile?.volcengineBaseUrl || VOLCENGINE_DEFAULT_BASE_URL);
   }
   return String(legacyProfile?.geminiBaseUrl || GEMINI_DEFAULT_BASE_URL);
 }
@@ -629,6 +661,7 @@ function mergeLegacyProviderProfile(existingProfile, provider, promptProfile, im
     imageModel: mergedImage.model,
     geminiBaseUrl: provider === "gemini" ? mergedPrompt.baseUrl : base.geminiBaseUrl,
     openaiBaseUrl: provider === "openai-compatible" ? mergedPrompt.baseUrl : base.openaiBaseUrl,
+    volcengineBaseUrl: provider === "volcengine" ? mergedPrompt.baseUrl : base.volcengineBaseUrl,
     autoAnalyze: mergedPrompt.autoAnalyze
   };
 }
@@ -646,6 +679,7 @@ function sanitizeProviderProfile(provider, input) {
     imageModel: String(merged.imageModel || defaults.imageModel),
     geminiBaseUrl: String(merged.geminiBaseUrl || defaults.geminiBaseUrl),
     openaiBaseUrl: String(merged.openaiBaseUrl || defaults.openaiBaseUrl),
+    volcengineBaseUrl: String(merged.volcengineBaseUrl || defaults.volcengineBaseUrl),
     customProxyUrl: String(merged.customProxyUrl || ""),
     customProxyToken: String(merged.customProxyToken || ""),
     autoAnalyze: Boolean(merged.autoAnalyze)
@@ -663,6 +697,24 @@ function getProviderDefaults(provider) {
       imageModel: OPENAI_LATEST_IMAGE_MODEL,
       geminiBaseUrl: GEMINI_DEFAULT_BASE_URL,
       openaiBaseUrl: OPENAI_DEFAULT_BASE_URL,
+      volcengineBaseUrl: VOLCENGINE_DEFAULT_BASE_URL,
+      customProxyUrl: "",
+      customProxyToken: "",
+      autoAnalyze: true
+    };
+  }
+
+  if (provider === "volcengine") {
+    return {
+      apiMode: "direct",
+      promptApiKey: "",
+      promptModel: VOLCENGINE_DEFAULT_PROMPT_MODEL,
+      imageGenerationEnabled: true,
+      imageApiKey: "",
+      imageModel: VOLCENGINE_DEFAULT_IMAGE_MODEL,
+      geminiBaseUrl: GEMINI_DEFAULT_BASE_URL,
+      openaiBaseUrl: OPENAI_DEFAULT_BASE_URL,
+      volcengineBaseUrl: VOLCENGINE_DEFAULT_BASE_URL,
       customProxyUrl: "",
       customProxyToken: "",
       autoAnalyze: true
@@ -678,6 +730,7 @@ function getProviderDefaults(provider) {
     imageModel: DEFAULT_IMAGE_MODEL,
     geminiBaseUrl: GEMINI_DEFAULT_BASE_URL,
     openaiBaseUrl: OPENAI_DEFAULT_BASE_URL,
+    volcengineBaseUrl: VOLCENGINE_DEFAULT_BASE_URL,
     customProxyUrl: "",
     customProxyToken: "",
     autoAnalyze: true
@@ -717,10 +770,9 @@ async function analyzeImage(payload, sender) {
   });
   const prompt = buildAnalyzePrompt(payload);
 
-  const rawText =
-    settings.promptProvider === "openai-compatible"
-      ? await analyzeImageWithOpenAICompatible(settings, imagePart, prompt)
-      : await analyzeImageWithGemini(settings, imagePart, prompt);
+  const rawText = isOpenAIStyleProvider(settings.promptProvider)
+    ? await analyzeImageWithOpenAICompatible(settings, imagePart, prompt)
+    : await analyzeImageWithGemini(settings, imagePart, prompt);
   const parsed = parseLooseJson(rawText);
   const calibrated = calibratePromptPayload(parsed);
 
@@ -747,6 +799,8 @@ async function generateImage(payload) {
   const settings = await getSettings();
   const prompt = String(payload.prompt || "").trim();
   const shouldOpenViewer = Boolean(payload.openViewer);
+  const useReferenceImage = Boolean(payload.useReferenceImage);
+  const referenceImageDataUrls = normalizeReferenceImageDataUrls(payload);
 
   if (!settings.imageGenerationEnabled) {
     throw new Error("生图功能当前已关闭。");
@@ -756,11 +810,25 @@ async function generateImage(payload) {
     throw new Error("Missing prompt for generation.");
   }
 
+  if (useReferenceImage && referenceImageDataUrls.length === 0) {
+    throw new Error("图生图需要参考图，请先添加参考图或用 @图1 引用。");
+  }
+
+  const normalizedPayload = {
+    ...payload,
+    useReferenceImage,
+    referenceImageDataUrl: referenceImageDataUrls[0] || "",
+    referenceImageDataUrls
+  };
+
   if (settings.apiMode === "proxy") {
     const result = await callProxy(settings, "/generate", {
       prompt,
       aspectRatio: payload.aspectRatio || settings.aspectRatio,
-      count: payload.count || settings.imageCount || 1
+      count: payload.count || settings.imageCount || 1,
+      useReferenceImage,
+      referenceImageDataUrl: useReferenceImage ? referenceImageDataUrls[0] : "",
+      referenceImageDataUrls: useReferenceImage ? referenceImageDataUrls : []
     });
 
     const viewer = await saveViewerImages(result.images || [], prompt);
@@ -772,10 +840,9 @@ async function generateImage(payload) {
 
   ensureImageApiKey(settings);
 
-  const images =
-    settings.imageProvider === "openai-compatible"
-      ? await generateImageWithOpenAICompatible(settings, payload, prompt)
-      : await generateImageWithGemini(settings, payload, prompt);
+  const images = isOpenAIStyleProvider(settings.imageProvider)
+    ? await generateImageWithOpenAICompatible(settings, normalizedPayload, prompt)
+    : await generateImageWithGemini(settings, normalizedPayload, prompt);
 
   if (images.length === 0) {
     throw new Error("Image generation returned no images.");
@@ -837,7 +904,8 @@ async function analyzeImageWithOpenAICompatible(settings, imagePart, prompt) {
   const response = await callOpenAICompatibleChatCompletion({
     baseUrl: settings.promptBaseUrl,
     apiKey: settings.promptApiKey,
-    model: settings.promptModel || OPENAI_DEFAULT_PROMPT_MODEL,
+    provider: settings.promptProvider,
+    model: settings.promptModel || getDefaultPromptModel(settings.promptProvider),
     temperature: 0.2,
     messages: [
       {
@@ -860,17 +928,42 @@ async function analyzeImageWithOpenAICompatible(settings, imagePart, prompt) {
 }
 
 async function generateImageWithGemini(settings, payload, prompt) {
+  const useReferenceImage = Boolean(payload.useReferenceImage);
+  const referenceParts = useReferenceImage ? collectReferenceImageParts(payload) : [];
+
+  if (useReferenceImage && referenceParts.length === 0) {
+    throw new Error("图生图参考图无效，请重新添加或选择图片。");
+  }
+
+  const finalPrompt = useReferenceImage
+    ? buildImageToImagePrompt(prompt, referenceParts.length)
+    : prompt;
+  const parts = useReferenceImage
+    ? [
+        ...referenceParts.flatMap((part, index) => [
+          { text: `图${index + 1}:` },
+          {
+            inline_data: {
+              mime_type: part.mimeType,
+              data: part.data
+            }
+          }
+        ]),
+        { text: finalPrompt }
+      ]
+    : [{ text: finalPrompt }];
+
   const data = await callGeminiGenerateContent({
     baseUrl: settings.imageBaseUrl,
     apiKey: settings.imageApiKey,
     model: settings.imageModel,
     contents: [
       {
-        parts: [{ text: prompt }]
+        parts
       }
     ],
     generationConfig: {
-      responseModalities: ["Image"],
+      responseModalities: useReferenceImage ? ["TEXT", "Image"] : ["Image"],
       imageConfig: {
         aspectRatio: payload.aspectRatio || settings.aspectRatio || "1:1"
       }
@@ -883,10 +976,65 @@ async function generateImageWithGemini(settings, payload, prompt) {
 async function generateImageWithOpenAICompatible(settings, payload, prompt) {
   const size = mapAspectRatioToOpenAIImageSize(payload.aspectRatio || settings.aspectRatio || "1:1");
   const count = clampImageCount(payload.count || settings.imageCount || 1);
+  const useReferenceImage = Boolean(payload.useReferenceImage);
+  const provider = settings.imageProvider || "openai-compatible";
+  const model = settings.imageModel || getDefaultImageModel(provider);
+  const referenceParts = useReferenceImage ? collectReferenceImageParts(payload) : [];
+
+  if (useReferenceImage) {
+    if (referenceParts.length === 0) {
+      throw new Error("图生图参考图无效，请重新添加或选择图片。");
+    }
+
+    const referenceDataUrls = referenceParts.map(
+      (part) => `data:${part.mimeType};base64,${part.data}`
+    );
+    const img2imgPrompt = buildImageToImagePrompt(prompt, referenceParts.length);
+
+    if (provider === "volcengine") {
+      const response = await generateVolcengineImage({
+        baseUrl: settings.imageBaseUrl,
+        apiKey: settings.imageApiKey,
+        model,
+        prompt: img2imgPrompt,
+        n: count,
+        size,
+        image: referenceDataUrls.length === 1 ? referenceDataUrls[0] : referenceDataUrls
+      });
+      return extractImagesFromOpenAICompatible(response);
+    }
+
+    const response = await callOpenAICompatibleImagesEdit({
+      baseUrl: settings.imageBaseUrl,
+      apiKey: settings.imageApiKey,
+      provider,
+      model,
+      prompt: img2imgPrompt,
+      n: count,
+      size,
+      imageParts: referenceParts
+    });
+
+    return extractImagesFromOpenAICompatible(response);
+  }
+
+  if (provider === "volcengine") {
+    const response = await generateVolcengineImage({
+      baseUrl: settings.imageBaseUrl,
+      apiKey: settings.imageApiKey,
+      model,
+      prompt,
+      n: count,
+      size
+    });
+    return extractImagesFromOpenAICompatible(response);
+  }
+
   const baseRequest = {
     baseUrl: settings.imageBaseUrl,
     apiKey: settings.imageApiKey,
-    model: settings.imageModel || OPENAI_LATEST_IMAGE_MODEL,
+    provider,
+    model,
     prompt,
     n: count,
     size
@@ -907,6 +1055,84 @@ async function generateImageWithOpenAICompatible(settings, payload, prompt) {
   }
 
   return extractImagesFromOpenAICompatible(response);
+}
+
+async function generateVolcengineImage({ baseUrl, apiKey, model, prompt, n, size, image }) {
+  const body = {
+    model,
+    prompt,
+    n: clampImageCount(n || 1),
+    size,
+    response_format: "b64_json",
+    watermark: false,
+    sequential_image_generation: "disabled"
+  };
+
+  if (image) {
+    body.image = image;
+  }
+
+  try {
+    return await callOpenAICompatibleImagesGenerate({
+      baseUrl,
+      apiKey,
+      provider: "volcengine",
+      ...body
+    });
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    if (!/response_format|b64_json|unsupported|unknown|invalid/i.test(message)) {
+      throw error;
+    }
+
+    delete body.response_format;
+    return callOpenAICompatibleImagesGenerate({
+      baseUrl,
+      apiKey,
+      provider: "volcengine",
+      ...body
+    });
+  }
+}
+
+function buildImageToImagePrompt(prompt, referenceCount = 1) {
+  const text = String(prompt || "").trim();
+  const count = Math.max(1, Number(referenceCount) || 1);
+
+  if (count <= 1) {
+    return [
+      "Use the provided reference image as the primary visual source.",
+      "Preserve the subject's identity, facial features, pose, outfit cues, colors, and overall composition as much as possible.",
+      "If the prompt mentions @图1, it refers to this reference image.",
+      "Refine and regenerate according to the following description:",
+      text
+    ].join("\n");
+  }
+
+  return [
+    `You are given ${count} reference images in order, labeled 图1 to 图${count}.`,
+    "When the user prompt mentions @图N, use the N-th reference image for that part of the instruction.",
+    "If multiple @图N are mentioned, combine them according to the prompt (e.g. subject from one image, style/background from another).",
+    "Preserve identity and key visual traits from the referenced images unless the prompt explicitly asks to change them.",
+    "Generate according to the following description:",
+    text
+  ].join("\n");
+}
+
+function normalizeReferenceImageDataUrls(payload = {}) {
+  const fromList = Array.isArray(payload.referenceImageDataUrls)
+    ? payload.referenceImageDataUrls.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (fromList.length > 0) return fromList.slice(0, 6);
+
+  const single = String(payload.referenceImageDataUrl || "").trim();
+  return single ? [single] : [];
+}
+
+function collectReferenceImageParts(payload = {}) {
+  return normalizeReferenceImageDataUrls(payload)
+    .map((dataUrl) => parseDataUrlImage(dataUrl))
+    .filter((part) => part?.data);
 }
 
 async function openOptionsPage() {
@@ -999,8 +1225,8 @@ async function callGeminiGenerateContent({ baseUrl, apiKey, model, contents, gen
   return parseApiResponse(response);
 }
 
-async function callOpenAICompatibleChatCompletion({ baseUrl, apiKey, ...payload }) {
-  const endpoint = buildOpenAICompatibleUrl(baseUrl, "/chat/completions");
+async function callOpenAICompatibleChatCompletion({ baseUrl, apiKey, provider = "openai-compatible", ...payload }) {
+  const endpoint = buildOpenAICompatibleUrl(baseUrl, "/chat/completions", provider);
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -1013,8 +1239,13 @@ async function callOpenAICompatibleChatCompletion({ baseUrl, apiKey, ...payload 
   return parseApiResponse(response);
 }
 
-async function callOpenAICompatibleImagesGenerate({ baseUrl, apiKey, ...payload }) {
-  const endpoint = buildOpenAICompatibleUrl(baseUrl, "/images/generations");
+async function callOpenAICompatibleImagesGenerate({
+  baseUrl,
+  apiKey,
+  provider = "openai-compatible",
+  ...payload
+}) {
+  const endpoint = buildOpenAICompatibleUrl(baseUrl, "/images/generations", provider);
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -1025,6 +1256,90 @@ async function callOpenAICompatibleImagesGenerate({ baseUrl, apiKey, ...payload 
   });
 
   return parseApiResponse(response);
+}
+
+async function callOpenAICompatibleImagesEdit({
+  baseUrl,
+  apiKey,
+  provider = "openai-compatible",
+  model,
+  prompt,
+  n,
+  size,
+  imagePart,
+  imageParts
+}) {
+  const endpoint = buildOpenAICompatibleUrl(baseUrl, "/images/edits", provider);
+  const parts =
+    Array.isArray(imageParts) && imageParts.length > 0
+      ? imageParts.filter((part) => part?.data)
+      : imagePart?.data
+        ? [imagePart]
+        : [];
+
+  if (parts.length === 0) {
+    throw new Error("图生图参考图无效，请重新添加或选择图片。");
+  }
+
+  const form = new FormData();
+  if (parts.length === 1) {
+    const binary = base64ToUint8Array(parts[0].data);
+    const blob = new Blob([binary], { type: parts[0].mimeType || "image/png" });
+    form.append("image", blob, "reference.png");
+  } else {
+    parts.forEach((part, index) => {
+      const binary = base64ToUint8Array(part.data);
+      const blob = new Blob([binary], { type: part.mimeType || "image/png" });
+      form.append("image[]", blob, `reference-${index + 1}.png`);
+    });
+  }
+  form.append("prompt", String(prompt || ""));
+  form.append("model", String(model || OPENAI_LATEST_IMAGE_MODEL));
+  form.append("n", String(clampImageCount(n || 1)));
+  if (size) form.append("size", String(size));
+  form.append("response_format", "b64_json");
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: form
+  });
+
+  try {
+    return await parseApiResponse(response);
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    if (parts.length > 1 && /image\[\]|multiple|array|unsupported|invalid|unknown/i.test(message)) {
+      return callOpenAICompatibleImagesEdit({
+        baseUrl,
+        apiKey,
+        provider,
+        model,
+        prompt,
+        n,
+        size,
+        imageParts: [parts[0]]
+      });
+    }
+    if (/not found|404|unsupported|unknown|invalid|does not support/i.test(message)) {
+      throw new Error(
+        `当前 OpenAI 兼容接口可能不支持图生图（/images/edits）。可改用 Gemini / 火山引擎生图，或关闭「参考原图」仅用提示词生图。原始错误：${message}`
+      );
+    }
+    throw error;
+  }
+}
+
+function base64ToUint8Array(base64) {
+  const normalized = String(base64 || "").replace(/\s+/g, "");
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 async function parseApiResponse(response) {

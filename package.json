@@ -1,7 +1,7 @@
 {
   "name": "xiaobo-draw",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "Build scripts for 小波绘词 Chrome extension",
   "scripts": {
     "build": "node scripts/build.mjs",

@@ -22,6 +22,7 @@
 - 支持直接编辑识别出来的提示词
 - 支持一键复制提示词
 - 支持在弹窗内直接生图
+- 支持参考原图的图生图（原图 + 提示词）
 - 支持选择生图比例：1:1、3:4、4:3、9:16、16:9
 - 支持在新页面查看和下载生成图片
 - 支持本地历史记录：自动保存识别提示词与生成图片，可浏览、复制、删除
@@ -50,16 +51,18 @@ npm run pack
 
 - `Gemini`
 - `OpenAI Compatible`
+- `火山引擎`（方舟 OpenAI 兼容接口）
 
 ### 生图
 
 - `Gemini`
 - `OpenAI Compatible`
+- `火山引擎`（Seedream 等方舟生图模型）
 
 你可以自由组合，例如：
 
 - 识图使用 `OpenAI Compatible`，生图使用 `Gemini`
-- 识图使用 `Gemini`，生图使用 `OpenAI Compatible`
+- 识图使用 `Gemini`，生图使用 `火山引擎`
 - 两边都使用同一个服务商
 
 ## 当前默认值
@@ -72,6 +75,9 @@ npm run pack
 - `OpenAI Compatible`
   - Base URL: 可只填中转站域名（如 `https://api.example.com`），插件会自动补全 `/v1`
   - 模型: `gpt-4o`
+- `火山引擎`
+  - Base URL: `https://ark.cn-beijing.volces.com/api/v3`
+  - 模型: `doubao-1.5-vision-pro`（也可填方舟推理接入点 ID）
 
 ### 生图默认值
 
@@ -81,6 +87,9 @@ npm run pack
 - `OpenAI Compatible`
   - Base URL: 可只填中转站域名，自动补全 `/v1`
   - 模型: `gpt-image-2`
+- `火山引擎`
+  - Base URL: `https://ark.cn-beijing.volces.com/api/v3`
+  - 模型: `doubao-seedream-4-0-250828`（也可填推理接入点 ID）
 
 不同账号、地区、套餐或兼容平台可能支持不同模型。如果遇到模型不可用，请到插件选项页修改模型名称，或参考对应服务商文档确认当前可用模型。
 

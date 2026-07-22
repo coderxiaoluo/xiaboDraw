@@ -26,10 +26,18 @@
 
             <label class="field">
               <span>识图服务商</span>
-              <select name="promptProvider">
-                <option value="gemini">Gemini</option>
-                <option value="openai-compatible">OpenAI Compatible</option>
-              </select>
+              <div class="provider-select" data-select-name="promptProvider">
+                <select name="promptProvider" hidden>
+                  <option value="gemini">Gemini</option>
+                  <option value="openai-compatible">OpenAI Compatible</option>
+                  <option value="volcengine">火山引擎</option>
+                </select>
+                <button type="button" class="provider-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="provider-select-value">Gemini</span>
+                  <span class="provider-select-chevron" aria-hidden="true"></span>
+                </button>
+                <ul class="provider-select-menu" role="listbox" hidden></ul>
+              </div>
             </label>
 
             <label class="field">
@@ -70,10 +78,18 @@
             <div id="image-settings-group" class="field-stack">
               <label class="field">
                 <span>生图服务商</span>
-                <select name="imageProvider">
-                  <option value="gemini">Gemini</option>
-                  <option value="openai-compatible">OpenAI Compatible</option>
-                </select>
+                <div class="provider-select" data-select-name="imageProvider">
+                  <select name="imageProvider" hidden>
+                    <option value="gemini">Gemini</option>
+                    <option value="openai-compatible">OpenAI Compatible</option>
+                    <option value="volcengine">火山引擎</option>
+                  </select>
+                  <button type="button" class="provider-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                    <span class="provider-select-value">Gemini</span>
+                    <span class="provider-select-chevron" aria-hidden="true"></span>
+                  </button>
+                  <ul class="provider-select-menu" role="listbox" hidden></ul>
+                </div>
               </label>
 
               <label class="field">

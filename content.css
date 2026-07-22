@@ -495,6 +495,149 @@
   min-width: 0;
 }
 
+.pg-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 2px;
+  color: var(--pg-ink-body);
+  font: 500 12px/1.3 var(--pg-font);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pg-toggle-row input {
+  width: 15px;
+  height: 15px;
+  accent-color: #3b82f6;
+}
+
+.pg-toggle-row.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pg-ref-block {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.pg-ref-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--pg-ink-muted, #9aa3b5);
+  font: 500 12px/1.4 var(--pg-font);
+}
+
+.pg-ref-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.pg-ref-empty {
+  margin: 0;
+  color: #71798c;
+  font: 400 12px/1.5 var(--pg-font);
+}
+
+.pg-ref-card {
+  position: relative;
+  width: 72px;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.pg-ref-card img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #3a3f4b;
+  background: #1a1d24;
+}
+
+.pg-ref-label {
+  color: #aeb6c7;
+  font: 600 11px/1.2 var(--pg-font);
+}
+
+.pg-ref-remove {
+  position: absolute;
+  top: -4px;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 18, 24, 0.92);
+  color: #fff;
+  font: 700 12px/1 var(--pg-font);
+  cursor: pointer;
+}
+
+.pg-ref-remove:hover {
+  background: #ef4444;
+}
+
+.pg-at-menu {
+  position: absolute;
+  left: 12px;
+  bottom: 36px;
+  z-index: 20;
+  min-width: 160px;
+  max-width: min(260px, calc(100% - 24px));
+  max-height: 220px;
+  overflow: auto;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid #3a3f4b;
+  background: #171a21;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  display: grid;
+  gap: 4px;
+}
+
+.pg-at-menu.pg-hidden {
+  display: none;
+}
+
+.pg-at-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pg-ink-body);
+  font: 500 12px/1.3 var(--pg-font);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pg-at-option img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #3a3f4b;
+}
+
+.pg-at-option:hover,
+.pg-at-option.is-active {
+  background: rgba(59, 130, 246, 0.18);
+}
+
 .pg-generate-row .pg-actions-fixed {
   display: grid;
   grid-template-columns: 1fr;

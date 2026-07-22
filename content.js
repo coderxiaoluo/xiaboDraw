@@ -6,6 +6,7 @@ window.__XIAOBO_DRAW_CONTENT__ = true;
 const imageCache = new Map();
 const RATIO_OPTIONS = ["1:1", "3:4", "4:3", "9:16", "16:9"];
 const DEFAULT_PREVIEW_LOGO = chrome.runtime.getURL("icons/icon-128.png");
+const MAX_REFERENCE_IMAGES = 6;
 let hoverHideTimer = null;
 
 const state = {
@@ -15,6 +16,7 @@ const state = {
   panelOpen: false,
   currentJob: null,
   historyId: null,
+  referenceImages: [],
   panelData: createEmptyPanelData(),
   actionState: {
     analyze: false,
@@ -68,7 +70,8 @@ panel.innerHTML = `
       </div>
 
       <div class="pg-editor">
-        <textarea class="pg-textarea" id="pg-prompt-input" placeholder="输入或粘贴提示词即可生图；也可分析网页图片自动反推"></textarea>
+        <textarea class="pg-textarea" id="pg-prompt-input" placeholder="输入提示词；图生图可添加多张参考图，并用 @图1 @图2 引用"></textarea>
+        <div class="pg-at-menu pg-hidden" id="pg-at-menu" role="listbox"></div>
         <span class="pg-char-count" id="pg-char-count">0 字</span>
       </div>
       <div class="pg-structure pg-hidden" id="pg-structure">
@@ -101,6 +104,18 @@ panel.innerHTML = `
             <ul class="pg-ratio-menu" id="pg-ratio-menu" role="listbox" hidden></ul>
           </div>
         </label>
+        <label class="pg-toggle-row" id="pg-img2img-row">
+          <input id="pg-img2img" type="checkbox" checked />
+          <span>参考原图（图生图）</span>
+        </label>
+        <div class="pg-ref-block" id="pg-ref-block">
+          <div class="pg-ref-head">
+            <span>参考图（最多 ${MAX_REFERENCE_IMAGES} 张，输入 @图1 引用）</span>
+            <button class="pg-chip" id="pg-add-ref" type="button">添加参考图</button>
+            <input id="pg-ref-file" type="file" accept="image/*" multiple hidden />
+          </div>
+          <div class="pg-ref-list" id="pg-ref-list"></div>
+        </div>
         <div class="pg-actions pg-actions-fixed">
           <button class="pg-action pg-action-generate" id="pg-generate" type="button">立刻生图</button>
         </div>
@@ -127,6 +142,13 @@ const els = {
   analyze: panel.querySelector("#pg-analyze"),
   copy: panel.querySelector("#pg-copy"),
   generate: panel.querySelector("#pg-generate"),
+  img2img: panel.querySelector("#pg-img2img"),
+  img2imgRow: panel.querySelector("#pg-img2img-row"),
+  refBlock: panel.querySelector("#pg-ref-block"),
+  refList: panel.querySelector("#pg-ref-list"),
+  addRef: panel.querySelector("#pg-add-ref"),
+  refFile: panel.querySelector("#pg-ref-file"),
+  atMenu: panel.querySelector("#pg-at-menu"),
   close: panel.querySelector("#pg-close"),
   openHistory: panel.querySelector("#pg-open-history"),
   openOptions: panel.querySelector("#pg-open-options"),
@@ -167,6 +189,8 @@ async function init() {
   } finally {
     bindEvents();
     bindRuntimeMessages();
+    renderReferenceImages();
+    syncImg2ImgAvailability();
   }
 }
 
@@ -251,7 +275,7 @@ function bindEvents() {
     els.fileInput.value = "";
     if (!file) return;
     try {
-      await loadLocalImageFile(file, { autoAnalyze: true });
+      await loadLocalImageFile(file, { autoAnalyze: false });
     } catch (error) {
       handleRuntimeError(error);
     }
@@ -266,7 +290,7 @@ function bindEvents() {
     const file = getImageFileFromClipboardEvent(event);
     if (!file) return;
     event.preventDefault();
-    loadLocalImageFile(file, { autoAnalyze: true }).catch(handleRuntimeError);
+    loadLocalImageFile(file, { autoAnalyze: false }).catch(handleRuntimeError);
   });
 
   els.dropZone?.addEventListener("dragenter", (event) => {
@@ -290,7 +314,7 @@ function bindEvents() {
       setStatus("请拖入图片文件。", "error");
       return;
     }
-    loadLocalImageFile(file, { autoAnalyze: true }).catch(handleRuntimeError);
+    loadLocalImageFile(file, { autoAnalyze: false }).catch(handleRuntimeError);
   });
 
   els.ratioSelect.addEventListener("change", () => {
@@ -336,6 +360,39 @@ function bindEvents() {
 
   els.generate.addEventListener("click", () => {
     generateFromCurrentPrompt().catch(handleRuntimeError);
+  });
+  els.img2img?.addEventListener("change", () => {
+    if (els.img2img) els.img2img.dataset.userTouched = "1";
+    syncImg2ImgAvailability();
+  });
+  els.addRef?.addEventListener("click", () => els.refFile?.click());
+  els.refFile?.addEventListener("change", async () => {
+    const files = Array.from(els.refFile.files || []);
+    els.refFile.value = "";
+    for (const file of files) {
+      try {
+        await addReferenceImageFromFile(file);
+      } catch (error) {
+        handleRuntimeError(error);
+      }
+    }
+  });
+  els.refList?.addEventListener("click", (event) => {
+    const removeBtn = event.target.closest("[data-role='remove-ref']");
+    if (!removeBtn) return;
+    removeReferenceImage(Number(removeBtn.dataset.index));
+  });
+  els.input?.addEventListener("input", handlePromptInputForAtMention);
+  els.input?.addEventListener("keydown", handlePromptKeydownForAtMention);
+  els.atMenu?.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-role='at-option']");
+    if (!option) return;
+    insertAtMention(option.dataset.label || "");
+  });
+  document.addEventListener("click", (event) => {
+    if (!els.atMenu || els.atMenu.classList.contains("pg-hidden")) return;
+    if (els.atMenu.contains(event.target) || els.input?.contains(event.target)) return;
+    hideAtMenu();
   });
   els.inlineGrid.addEventListener("click", handleInlinePreviewClick);
 }
@@ -521,6 +578,8 @@ async function openBlankPanel() {
   state.panelOpen = true;
   state.currentJob = null;
   state.historyId = null;
+  if (els.img2img) delete els.img2img.dataset.userTouched;
+  clearReferenceImages();
   panel.classList.add("pg-open");
 
   els.previewImage.src = DEFAULT_PREVIEW_LOGO;
@@ -545,7 +604,7 @@ async function openBlankPanel() {
   syncGenerationVisibility();
   syncPromptControls();
   syncAnalyzeAvailability();
-  setStatus("可直接输入提示词生图，也可上传/粘贴图片后识别。");
+  setStatus("可直接输入提示词生图，也可上传/粘贴图片后识别；图生图可添加多张参考并用 @图1 引用。");
   els.input?.focus();
 }
 
@@ -553,6 +612,8 @@ async function openPanelForImage(image) {
   hideHoverButton();
   state.panelImage = image;
   state.panelOpen = true;
+  if (els.img2img) delete els.img2img.dataset.userTouched;
+  clearReferenceImages();
   panel.classList.add("pg-open");
 
   const imageUrl = image?.currentSrc || image?.src || "";
@@ -572,6 +633,8 @@ async function openPanelForImage(image) {
     handleRuntimeError(error);
     return;
   }
+
+  await syncMainImageIntoReferences();
 
   const cached = imageCache.get(imageUrl);
   if (cached) {
@@ -594,14 +657,7 @@ async function openPanelForImage(image) {
   }
 }
 
-function syncAnalyzeAvailability() {
-  const canAnalyze = Boolean(state.panelImage);
-  els.analyze.disabled = !canAnalyze;
-  els.analyze.title = canAnalyze ? "重新识别当前图片" : "请先上传、粘贴或选择网页图片";
-  els.analyze.classList.toggle("is-disabled", !canAnalyze);
-}
-
-async function loadLocalImageFile(file, { autoAnalyze = true } = {}) {
+async function loadLocalImageFile(file, { autoAnalyze = false } = {}) {
   if (!file || !String(file.type || "").startsWith("image/")) {
     throw new Error("请选择图片文件。");
   }
@@ -610,7 +666,7 @@ async function loadLocalImageFile(file, { autoAnalyze = true } = {}) {
   await applyLocalImageDataUrl(dataUrl, file.name || "本地图片", { autoAnalyze });
 }
 
-async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAnalyze = true } = {}) {
+async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAnalyze = false } = {}) {
   if (!String(dataUrl || "").startsWith("data:image/")) {
     throw new Error("无法读取图片数据。");
   }
@@ -621,6 +677,8 @@ async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAna
   state.panelOpen = true;
   state.currentJob = null;
   state.historyId = null;
+  if (els.img2img) delete els.img2img.dataset.userTouched;
+  clearReferenceImages();
   panel.classList.add("pg-open");
 
   els.previewImage.src = dataUrl;
@@ -630,6 +688,7 @@ async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAna
   els.imageUrl.textContent = "本地/粘贴图片";
   els.imageUrl.title = title;
   renderInlineImages([]);
+  await addReferenceImageFromDataUrl(dataUrl, { prepend: true });
 
   try {
     state.settings = await sendMessage({ type: "get-settings" });
@@ -653,12 +712,10 @@ async function applyLocalImageDataUrl(dataUrl, title = "本地图片", { autoAna
   syncGenerationVisibility();
   syncPromptControls();
   syncAnalyzeAvailability();
-  setStatus("本地图片已载入，准备识别...");
+  setStatus("本地图片已载入，可点击「重新识别」开始识图。");
 
   if (autoAnalyze) {
     await analyzeCurrentImage({ force: true });
-  } else {
-    setStatus("本地图片已载入，可点击「重新识别」。");
   }
 }
 
@@ -685,7 +742,7 @@ async function pasteImageFromClipboard() {
       if (!imageType) continue;
       const blob = await item.getType(imageType);
       const file = new File([blob], `paste-${Date.now()}.png`, { type: blob.type || "image/png" });
-      await loadLocalImageFile(file, { autoAnalyze: true });
+      await loadLocalImageFile(file, { autoAnalyze: false });
       return;
     }
     setStatus("剪贴板里没有图片，请先复制图片后再粘贴。", "error");
@@ -992,14 +1049,38 @@ async function generateFromCurrentPrompt() {
     return;
   }
 
-  await runAction("generate", "正在生图，结果会显示在当前弹窗...", async () => {
+  await syncMainImageIntoReferences();
+  const mentionedIndexes = parseAtImageIndexes(prompt);
+  const hasAtMentions = mentionedIndexes.length > 0;
+  const useReferenceImage = Boolean(els.img2img?.checked) || hasAtMentions;
+  const referenceImages = resolveReferenceImagesForPrompt(prompt, useReferenceImage);
+  const referenceImageDataUrls = referenceImages.map((item) => item.dataUrl).filter(Boolean);
+
+  if (useReferenceImage && referenceImageDataUrls.length === 0) {
+    setStatus("请先添加参考图，或在提示词中用 @图1 引用，或关闭「参考原图」。", "error");
+    return;
+  }
+
+  if (hasAtMentions && mentionedIndexes.some((index) => index < 1 || index > state.referenceImages.length)) {
+    setStatus(`@ 引用超出范围，当前只有 ${state.referenceImages.length} 张参考图。`, "error");
+    return;
+  }
+
+  const statusText = useReferenceImage
+    ? `正在按 ${referenceImageDataUrls.length} 张参考图 + 提示词生成...`
+    : "正在生图，结果会显示在当前弹窗...";
+
+  await runAction("generate", statusText, async () => {
     const result = await sendMessage({
       type: "generate-image",
       payload: {
         prompt,
         aspectRatio: state.panelData.aspectRatio || state.settings?.aspectRatio || "1:1",
         count: state.settings?.imageCount || 1,
-        openViewer: false
+        openViewer: false,
+        useReferenceImage,
+        referenceImageDataUrl: referenceImageDataUrls[0] || "",
+        referenceImageDataUrls
       }
     });
 
@@ -1009,8 +1090,243 @@ async function generateFromCurrentPrompt() {
 
     renderInlineImages(state.currentJob.images);
     await persistHistoryAfterGenerate();
-    setStatus("生图完成，预览已更新，已保存到历史。", "success");
+    setStatus(
+      useReferenceImage
+        ? `图生图完成（${referenceImageDataUrls.length} 张参考），已保存到历史。`
+        : "生图完成，预览已更新，已保存到历史。",
+      "success"
+    );
   });
+}
+
+function canUseReferenceImage() {
+  return state.referenceImages.length > 0 || hasUsablePanelImage();
+}
+
+function hasUsablePanelImage() {
+  if (!(state.panelImage instanceof HTMLImageElement)) return false;
+  const src = String(state.panelImage.currentSrc || state.panelImage.src || "");
+  if (!src) return false;
+  if (els.previewImage?.classList.contains("is-logo")) return false;
+  if (src.includes("/icons/icon-")) return false;
+  return true;
+}
+
+async function getReferenceImageDataUrl() {
+  if (!state.panelImage) return "";
+  const src = String(state.panelImage.currentSrc || state.panelImage.src || "");
+  if (src.startsWith("data:image/")) return src;
+  if (els.previewImage?.src?.startsWith("data:image/")) return els.previewImage.src;
+  return captureImageDataUrl(state.panelImage);
+}
+
+function parseAtImageIndexes(prompt) {
+  const indexes = [];
+  const matcher = /@图\s*(\d+)/g;
+  let match = matcher.exec(String(prompt || ""));
+  while (match) {
+    indexes.push(Number(match[1]));
+    match = matcher.exec(String(prompt || ""));
+  }
+  return Array.from(new Set(indexes));
+}
+
+function resolveReferenceImagesForPrompt(prompt, useReferenceImage) {
+  const mentioned = parseAtImageIndexes(prompt);
+  if (mentioned.length > 0) {
+    return mentioned
+      .map((index) => state.referenceImages[index - 1])
+      .filter((item) => item?.dataUrl);
+  }
+  if (!useReferenceImage) return [];
+  return state.referenceImages.filter((item) => item?.dataUrl);
+}
+
+async function syncMainImageIntoReferences() {
+  if (!hasUsablePanelImage()) return;
+  const dataUrl = await getReferenceImageDataUrl();
+  if (!dataUrl) return;
+  const exists = state.referenceImages.some((item) => item.dataUrl === dataUrl);
+  if (exists) return;
+  if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) return;
+  state.referenceImages.unshift({
+    id: crypto.randomUUID(),
+    label: "",
+    dataUrl
+  });
+  relabelReferenceImages();
+  renderReferenceImages();
+}
+
+async function addReferenceImageFromFile(file) {
+  if (!file || !String(file.type || "").startsWith("image/")) {
+    throw new Error("请选择图片文件。");
+  }
+  if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) {
+    throw new Error(`最多添加 ${MAX_REFERENCE_IMAGES} 张参考图。`);
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  state.referenceImages.push({
+    id: crypto.randomUUID(),
+    label: "",
+    dataUrl
+  });
+  relabelReferenceImages();
+  renderReferenceImages();
+  if (els.img2img && !els.img2img.disabled) {
+    els.img2img.checked = true;
+  }
+  syncImg2ImgAvailability();
+  setStatus(`已添加参考图，可用 @图${state.referenceImages.length} 引用。`);
+}
+
+async function addReferenceImageFromDataUrl(dataUrl, { prepend = false } = {}) {
+  if (!String(dataUrl || "").startsWith("data:image/")) return;
+  if (state.referenceImages.some((item) => item.dataUrl === dataUrl)) {
+    renderReferenceImages();
+    syncImg2ImgAvailability();
+    return;
+  }
+  if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) {
+    if (prepend) {
+      state.referenceImages.pop();
+    } else {
+      return;
+    }
+  }
+  const item = { id: crypto.randomUUID(), label: "", dataUrl };
+  if (prepend) state.referenceImages.unshift(item);
+  else state.referenceImages.push(item);
+  relabelReferenceImages();
+  renderReferenceImages();
+  syncImg2ImgAvailability();
+}
+
+function removeReferenceImage(index) {
+  if (index < 0 || index >= state.referenceImages.length) return;
+  state.referenceImages.splice(index, 1);
+  relabelReferenceImages();
+  renderReferenceImages();
+  syncImg2ImgAvailability();
+}
+
+function relabelReferenceImages() {
+  state.referenceImages = state.referenceImages.map((item, index) => ({
+    ...item,
+    label: `图${index + 1}`
+  }));
+}
+
+function clearReferenceImages() {
+  state.referenceImages = [];
+  renderReferenceImages();
+  hideAtMenu();
+  syncImg2ImgAvailability();
+}
+
+function renderReferenceImages() {
+  if (!els.refList) return;
+  if (state.referenceImages.length === 0) {
+    els.refList.innerHTML = `<p class="pg-ref-empty">暂无参考图，可点击「添加参考图」或上传/粘贴图片</p>`;
+    return;
+  }
+
+  els.refList.innerHTML = state.referenceImages
+    .map(
+      (item, index) => `
+      <article class="pg-ref-card" title="在提示词中输入 @${escapeHtml(item.label)}">
+        <img src="${escapeAttr(item.dataUrl)}" alt="${escapeHtml(item.label)}" />
+        <span class="pg-ref-label">@${escapeHtml(item.label)}</span>
+        <button type="button" class="pg-ref-remove" data-role="remove-ref" data-index="${index}" aria-label="移除${escapeHtml(item.label)}">×</button>
+      </article>
+    `
+    )
+    .join("");
+}
+
+function escapeAttr(text) {
+  return escapeHtml(text).replace(/`/g, "&#96;");
+}
+
+function handlePromptInputForAtMention() {
+  const cursor = els.input?.selectionStart ?? 0;
+  const value = els.input?.value || "";
+  const before = value.slice(0, cursor);
+  const match = before.match(/@图?$/);
+  if (!match || state.referenceImages.length === 0) {
+    hideAtMenu();
+    return;
+  }
+  showAtMenu();
+}
+
+function handlePromptKeydownForAtMention(event) {
+  if (!els.atMenu || els.atMenu.classList.contains("pg-hidden")) return;
+  const options = Array.from(els.atMenu.querySelectorAll("[data-role='at-option']"));
+  if (!options.length) return;
+
+  const active = els.atMenu.querySelector("[data-role='at-option'].is-active");
+  let index = options.indexOf(active);
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    index = (index + 1) % options.length;
+    options.forEach((item, i) => item.classList.toggle("is-active", i === index));
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    index = (index - 1 + options.length) % options.length;
+    options.forEach((item, i) => item.classList.toggle("is-active", i === index));
+    return;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    const selected = options[index >= 0 ? index : 0];
+    if (!selected) return;
+    event.preventDefault();
+    insertAtMention(selected.dataset.label || "");
+    return;
+  }
+  if (event.key === "Escape") {
+    hideAtMenu();
+  }
+}
+
+function showAtMenu() {
+  if (!els.atMenu) return;
+  els.atMenu.innerHTML = state.referenceImages
+    .map(
+      (item, index) => `
+      <button type="button" class="pg-at-option${index === 0 ? " is-active" : ""}" data-role="at-option" data-label="@${escapeHtml(item.label)}">
+        <img src="${escapeAttr(item.dataUrl)}" alt="" />
+        <span>@${escapeHtml(item.label)}</span>
+      </button>
+    `
+    )
+    .join("");
+  els.atMenu.classList.remove("pg-hidden");
+}
+
+function hideAtMenu() {
+  els.atMenu?.classList.add("pg-hidden");
+  if (els.atMenu) els.atMenu.innerHTML = "";
+}
+
+function insertAtMention(label) {
+  if (!els.input || !label) return;
+  const value = els.input.value || "";
+  const cursor = els.input.selectionStart ?? value.length;
+  const before = value.slice(0, cursor).replace(/@图?$/, "");
+  const after = value.slice(cursor);
+  const next = `${before}${label} ${after}`;
+  els.input.value = next;
+  state.panelData.prompts[state.panelData.detail][getCurrentLanguage()] = next;
+  const nextCursor = (before + label + " ").length;
+  els.input.focus();
+  els.input.setSelectionRange(nextCursor, nextCursor);
+  hideAtMenu();
+  updateMeta();
+  persistPanelImageCache();
 }
 
 function persistPanelImageCache() {
@@ -1167,13 +1483,34 @@ function syncActionState() {
 function syncAnalyzeAvailability() {
   const canAnalyze = Boolean(state.panelImage);
   els.analyze.disabled = !canAnalyze;
-  els.analyze.title = canAnalyze ? "重新识别当前图片" : "请先选择网页图片后再识别";
+  els.analyze.title = canAnalyze ? "重新识别当前图片" : "请先上传、粘贴或选择网页图片";
   els.analyze.classList.toggle("is-disabled", !canAnalyze);
+  syncImg2ImgAvailability();
 }
 
 function syncGenerationVisibility() {
   const enabled = Boolean(state.settings?.imageGenerationEnabled);
   els.generateSection?.classList.toggle("pg-hidden", !enabled);
+  syncImg2ImgAvailability();
+}
+
+function syncImg2ImgAvailability() {
+  const available = canUseReferenceImage();
+  if (els.img2img) {
+    els.img2img.disabled = !available;
+    if (!available) {
+      els.img2img.checked = false;
+    } else if (!els.img2img.dataset.userTouched) {
+      els.img2img.checked = true;
+    }
+  }
+  els.img2imgRow?.classList.toggle("is-disabled", !available);
+  els.img2imgRow?.setAttribute(
+    "title",
+    available
+      ? "开启后将参考图与提示词一起发送；也可用 @图1 精确引用"
+      : "请先添加参考图，或上传/选择图片"
+  );
 }
 
 function setStatus(text, tone = "") {
