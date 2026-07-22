@@ -627,20 +627,16 @@ async function openPanelForImage(image) {
   hideHoverButton();
   state.panelImage = image;
   state.panelOpen = true;
-  if (els.img2img) delete els.img2img.dataset.userTouched;
-  clearReferenceImages();
   panel.classList.add("pg-open");
 
   const imageUrl = image?.currentSrc || image?.src || "";
+  const title = image?.alt?.trim() || "网页图片";
   els.previewImage.src = imageUrl;
-  els.previewImage.alt = image?.alt?.trim() || "网页图片";
+  els.previewImage.alt = title;
   els.previewImage.classList.remove("is-logo");
-  els.imageTitle.textContent = image?.alt?.trim() || "网页图片";
+  els.imageTitle.textContent = title;
   els.imageUrl.textContent = imageUrl || "等待选择图片";
   els.imageUrl.title = imageUrl || "";
-  state.currentJob = null;
-  state.historyId = null;
-  renderInlineImages([]);
 
   try {
     state.settings = await sendMessage({ type: "get-settings" });
@@ -649,27 +645,79 @@ async function openPanelForImage(image) {
     return;
   }
 
-  await syncMainImageIntoReferences();
+  await addWebpageImageAsReference(image);
 
+  els.imageUrl.textContent = imageUrl
+    ? `${truncateMiddle(imageUrl, 42)} · 参考 ${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}`
+    : `参考 ${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}`;
+
+  const hasPrompt = Boolean(getCurrentPrompt().trim());
   const cached = imageCache.get(imageUrl);
-  if (cached) {
+
+  if (cached && !hasPrompt) {
     hydratePanelData(cached);
     syncAnalyzeAvailability();
+    setStatus("已载入网页图片（使用缓存提示词）。可继续添加参考图，确认后点「重新识别」。");
     return;
   }
 
-  state.panelData = createEmptyPanelData();
-  state.panelData.detail = "full";
-  state.panelData.aspectRatio = state.settings?.aspectRatio || "1:1";
-  renderRatioSelect();
-  syncGenerationVisibility();
-  syncPromptControls();
-  syncAnalyzeAvailability();
-  setStatus("等待识别...");
-
-  if (state.settings?.autoAnalyze) {
-    await analyzeCurrentImage({ force: false });
+  if (!hasPrompt) {
+    state.currentJob = null;
+    state.historyId = null;
+    state.panelData = createEmptyPanelData();
+    state.panelData.detail = "full";
+    state.panelData.aspectRatio = state.settings?.aspectRatio || "1:1";
+    renderRatioSelect();
+    syncGenerationVisibility();
+    syncPromptControls();
   }
+
+  syncAnalyzeAvailability();
+  setStatus(
+    `已载入网页图片，参考图 ${state.referenceImages.length}/${MAX_REFERENCE_IMAGES}。可继续点选/上传/粘贴，确认后点「重新识别」。`
+  );
+}
+
+async function addWebpageImageAsReference(image) {
+  if (state.referenceImages.length >= MAX_REFERENCE_IMAGES) {
+    setStatus(`参考图已满（最多 ${MAX_REFERENCE_IMAGES} 张），请先删除后再添加。`, "error");
+    return;
+  }
+
+  const src = String(image?.currentSrc || image?.src || "").trim();
+  let dataUrl = "";
+
+  if (src.startsWith("data:image/")) {
+    dataUrl = src;
+  } else {
+    try {
+      dataUrl = await captureImageDataUrl(image);
+    } catch (_error) {
+      dataUrl = "";
+    }
+  }
+
+  if (!dataUrl && /^https?:\/\//i.test(src)) {
+    try {
+      const result = await sendMessage({
+        type: "resolve-image-preview",
+        payload: {
+          imageUrl: src,
+          pageUrl: location.href
+        }
+      });
+      dataUrl = String(result?.dataUrl || "");
+    } catch (_error) {
+      dataUrl = "";
+    }
+  }
+
+  if (dataUrl.startsWith("data:image/")) {
+    await addReferenceImageFromDataUrl(dataUrl, { prepend: false, silent: true });
+    return;
+  }
+
+  await syncMainImageIntoReferences();
 }
 
 async function loadLocalImageFile(file, { autoAnalyze = false } = {}) {

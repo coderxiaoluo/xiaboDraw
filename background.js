@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS = {
   geminiImageModel: "gemini-3.1-flash-image-preview",
   customProxyUrl: "",
   customProxyToken: "",
-  autoAnalyze: true,
+  autoAnalyze: false,
   aspectRatio: "1:1",
   imageCount: 1,
   providerProfiles: {},
@@ -502,7 +502,7 @@ function deriveLegacyPromptProfile(settings, legacyProfile, provider) {
     apiKey: legacyProfile?.promptApiKey || "",
     model: legacyProfile?.promptModel || getProviderDefaults(provider).promptModel,
     baseUrl: getLegacyProfileBaseUrl(legacyProfile, provider),
-    autoAnalyze: true
+    autoAnalyze: false
   };
 }
 
@@ -555,7 +555,7 @@ function getPromptProviderDefaults(provider) {
     apiKey: "",
     model: getDefaultPromptModel(provider),
     baseUrl: getProviderBaseUrl(provider),
-    autoAnalyze: true
+    autoAnalyze: false
   };
 }
 
@@ -702,7 +702,7 @@ function getProviderDefaults(provider) {
       volcengineBaseUrl: VOLCENGINE_DEFAULT_BASE_URL,
       customProxyUrl: "",
       customProxyToken: "",
-      autoAnalyze: true
+      autoAnalyze: false
     };
   }
 
@@ -719,7 +719,7 @@ function getProviderDefaults(provider) {
       volcengineBaseUrl: VOLCENGINE_DEFAULT_BASE_URL,
       customProxyUrl: "",
       customProxyToken: "",
-      autoAnalyze: true
+      autoAnalyze: false
     };
   }
 
@@ -735,7 +735,7 @@ function getProviderDefaults(provider) {
     volcengineBaseUrl: VOLCENGINE_DEFAULT_BASE_URL,
     customProxyUrl: "",
     customProxyToken: "",
-    autoAnalyze: true
+    autoAnalyze: false
   };
 }
 

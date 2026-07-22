@@ -302,7 +302,7 @@ function getPromptProviderDefaults(provider) {
       apiKey: "",
       model: "gpt-4o",
       baseUrl: "https://api.openai.com/v1",
-      autoAnalyze: true
+      autoAnalyze: false
     };
   }
 
@@ -311,7 +311,7 @@ function getPromptProviderDefaults(provider) {
       apiKey: "",
       model: "doubao-1.5-vision-pro",
       baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      autoAnalyze: true
+      autoAnalyze: false
     };
   }
 
@@ -319,7 +319,7 @@ function getPromptProviderDefaults(provider) {
     apiKey: "",
     model: "gemini-3.1-pro-preview",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    autoAnalyze: true
+    autoAnalyze: false
   };
 }
 
