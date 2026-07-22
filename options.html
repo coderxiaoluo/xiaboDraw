@@ -33,9 +33,9 @@
             </label>
 
             <label class="field">
-              <span>识图 Base URL</span>
-              <input name="promptBaseUrl" type="url" placeholder="https://generativelanguage.googleapis.com/v1beta" />
-              <small id="prompt-base-url-help">Gemini 默认使用 Google 官方 REST 地址；切到 OpenAI Compatible 时会自动带入官方 API 地址。</small>
+              <span>识图接口地址</span>
+              <input name="promptBaseUrl" type="text" placeholder="https://api.example.com" autocomplete="off" />
+              <small id="prompt-base-url-help">中转站通常只填域名即可，例如 `https://api.klong.lat`；插件会自动补全 `/v1`。</small>
             </label>
 
             <label class="field">
@@ -77,9 +77,9 @@
               </label>
 
               <label class="field">
-                <span>生图 Base URL</span>
-                <input name="imageBaseUrl" type="url" placeholder="https://generativelanguage.googleapis.com/v1beta" />
-                <small id="image-base-url-help">Gemini 默认使用 Google 官方 REST 地址；切到 OpenAI Compatible 时会自动带入官方 API 地址。</small>
+                <span>生图接口地址</span>
+                <input name="imageBaseUrl" type="text" placeholder="https://api.example.com" autocomplete="off" />
+                <small id="image-base-url-help">中转站通常只填域名即可；已含 `/v1` 或自定义路径时会按原样保留。</small>
               </label>
 
               <label class="field">

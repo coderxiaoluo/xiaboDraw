@@ -2,7 +2,6 @@
 
 小波绘词 是一个 Chrome 浏览器插件，用于分析网页图片，并将图片内容反推为可编辑、可复制、可用于生图的提示词。
 
-<img width="2214" height="1572" alt="Github封面 拷贝" src="https://github.com/user-attachments/assets/60360953-a6ee-4a3d-b029-a14ae665e938" />
 
 当前版本采用自备 API Key 模式。项目不会内置、提供或托管任何 API Key；用户需要在插件选项页填写自己的服务商配置后使用。
 
@@ -56,7 +55,7 @@
   - Base URL: `https://generativelanguage.googleapis.com/v1beta`
   - 模型: `gemini-3.1-pro-preview`
 - `OpenAI Compatible`
-  - Base URL: `https://api.openai.com/v1`
+  - Base URL: 可只填中转站域名（如 `https://api.example.com`），插件会自动补全 `/v1`
   - 模型: `gpt-4o`
 
 ### 生图默认值
@@ -65,7 +64,7 @@
   - Base URL: `https://generativelanguage.googleapis.com/v1beta`
   - 模型: `gemini-3.1-flash-image-preview`
 - `OpenAI Compatible`
-  - Base URL: `https://api.openai.com/v1`
+  - Base URL: 可只填中转站域名，自动补全 `/v1`
   - 模型: `gpt-image-2`
 
 不同账号、地区、套餐或兼容平台可能支持不同模型。如果遇到模型不可用，请到插件选项页修改模型名称，或参考对应服务商文档确认当前可用模型。

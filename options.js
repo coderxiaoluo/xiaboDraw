@@ -207,7 +207,7 @@ function syncPromptProviderUI(provider) {
   }
   if (promptBaseUrlField) {
     promptBaseUrlField.placeholder = isOpenAICompatible
-      ? "https://api.openai.com/v1"
+      ? "https://api.example.com"
       : "https://generativelanguage.googleapis.com/v1beta";
   }
   if (promptModelHelp) {
@@ -217,8 +217,8 @@ function syncPromptProviderUI(provider) {
   }
   if (promptBaseUrlHelp) {
     promptBaseUrlHelp.textContent = isOpenAICompatible
-      ? "OpenAI Compatible 默认带入 https://api.openai.com/v1，也可以改成其他兼容网关。"
-      : "Gemini 默认使用 Google 官方 REST 地址。";
+      ? "中转站可只填域名，例如 https://api.klong.lat；插件会自动补全 /v1。已带 /v1 或自定义路径则保持不变。"
+      : "Gemini 默认官方地址；一般不用改，除非你使用兼容代理。";
   }
 }
 
@@ -232,7 +232,7 @@ function syncImageProviderUI(provider) {
   }
   if (imageBaseUrlField) {
     imageBaseUrlField.placeholder = isOpenAICompatible
-      ? "https://api.openai.com/v1"
+      ? "https://api.example.com"
       : "https://generativelanguage.googleapis.com/v1beta";
   }
   if (imageModelHelp) {
@@ -242,8 +242,8 @@ function syncImageProviderUI(provider) {
   }
   if (imageBaseUrlHelp) {
     imageBaseUrlHelp.textContent = isOpenAICompatible
-      ? "OpenAI Compatible 默认带入 https://api.openai.com/v1，也可以改成其他兼容网关。"
-      : "Gemini 默认使用 Google 官方 REST 地址。";
+      ? "中转站可只填域名；插件自动补全 /v1。已含路径则按你填写的为准。"
+      : "Gemini 默认官方地址；使用代理时再改成对应接口地址。";
   }
 }
 

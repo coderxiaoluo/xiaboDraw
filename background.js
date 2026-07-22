@@ -525,7 +525,7 @@ function sanitizePromptProviderProfile(provider, input) {
   return {
     apiKey: String(merged.apiKey || ""),
     model: String(merged.model || defaults.model),
-    baseUrl: String(merged.baseUrl || defaults.baseUrl),
+    baseUrl: normalizeProviderBaseUrl(provider, merged.baseUrl || defaults.baseUrl),
     autoAnalyze: Boolean(merged.autoAnalyze)
   };
 }
@@ -537,8 +537,10 @@ function sanitizeImageProviderProfile(provider, input) {
   return {
     apiKey: String(merged.apiKey || ""),
     model: String(merged.model || defaults.model),
-    baseUrl: String(merged.baseUrl || defaults.baseUrl),
-    imageGenerationEnabled: Boolean(merged.imageGenerationEnabled)
+    baseUrl: normalizeProviderBaseUrl(provider, merged.baseUrl || defaults.baseUrl),
+    imageGenerationEnabled: Boolean(
+      merged.imageGenerationEnabled === undefined ? defaults.imageGenerationEnabled : merged.imageGenerationEnabled
+    )
   };
 }
 
@@ -562,6 +564,48 @@ function getImageProviderDefaults(provider) {
 
 function getProviderBaseUrl(provider) {
   return provider === "openai-compatible" ? OPENAI_DEFAULT_BASE_URL : GEMINI_DEFAULT_BASE_URL;
+}
+
+function normalizeProviderBaseUrl(provider, input) {
+  const fallback = getProviderBaseUrl(provider);
+  let raw = String(input || "").trim();
+  if (!raw) return fallback;
+
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `https://${raw}`;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_error) {
+    return fallback;
+  }
+
+  if (!/^https?:$/i.test(parsed.protocol)) {
+    return fallback;
+  }
+
+  let pathname = parsed.pathname.replace(/\/+$/, "");
+  if (!pathname || pathname === "/") {
+    pathname = provider === "openai-compatible" ? "/v1" : "/v1beta";
+  }
+
+  parsed.pathname = pathname;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function buildOpenAICompatibleUrl(baseUrl, path) {
+  const normalizedBaseUrl =
+    normalizeProviderBaseUrl("openai-compatible", baseUrl) || OPENAI_DEFAULT_BASE_URL;
+  return new URL(path.replace(/^\//, ""), ensureTrailingSlash(normalizedBaseUrl)).toString();
+}
+
+function buildGeminiUrl(baseUrl, path) {
+  const normalizedBaseUrl = normalizeProviderBaseUrl("gemini", baseUrl) || GEMINI_DEFAULT_BASE_URL;
+  return new URL(path.replace(/^\//, ""), ensureTrailingSlash(normalizedBaseUrl)).toString();
 }
 
 function getLegacyProfileBaseUrl(legacyProfile, provider) {
@@ -955,11 +999,6 @@ async function callGeminiGenerateContent({ baseUrl, apiKey, model, contents, gen
   return parseApiResponse(response);
 }
 
-function buildGeminiUrl(baseUrl, path) {
-  const normalizedBaseUrl = String(baseUrl || GEMINI_DEFAULT_BASE_URL).trim() || GEMINI_DEFAULT_BASE_URL;
-  return new URL(path.replace(/^\//, ""), ensureTrailingSlash(normalizedBaseUrl)).toString();
-}
-
 async function callOpenAICompatibleChatCompletion({ baseUrl, apiKey, ...payload }) {
   const endpoint = buildOpenAICompatibleUrl(baseUrl, "/chat/completions");
   const response = await fetch(endpoint, {
@@ -986,11 +1025,6 @@ async function callOpenAICompatibleImagesGenerate({ baseUrl, apiKey, ...payload 
   });
 
   return parseApiResponse(response);
-}
-
-function buildOpenAICompatibleUrl(baseUrl, path) {
-  const normalizedBaseUrl = String(baseUrl || OPENAI_DEFAULT_BASE_URL).trim() || OPENAI_DEFAULT_BASE_URL;
-  return new URL(path.replace(/^\//, ""), ensureTrailingSlash(normalizedBaseUrl)).toString();
 }
 
 async function parseApiResponse(response) {
